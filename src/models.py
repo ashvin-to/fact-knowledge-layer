@@ -122,6 +122,7 @@ class DocumentUploadResponse(BaseModel):
     skipped_pages: list[int]
     failed_pages: list[int]
     error_message: Optional[str] = None
+    mode: str = "llm"
 
 
 class FactsResponse(BaseModel):
@@ -198,6 +199,7 @@ class CompareResponse(BaseModel):
     context_reconciled: int
     unrelated: int
     needs_review: int
+    mode: str = "llm"
 
 
 class RelationshipsResponse(BaseModel):
@@ -291,5 +293,6 @@ class SynthesisResponse(BaseModel):
 
     total_trajectories: int
     trajectories: list[TrajectoryItem]
+    mode: str = "llm"
 
 

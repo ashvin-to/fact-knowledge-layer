@@ -116,6 +116,7 @@ def generate_candidate_pairs(
 ) -> list[tuple[dict[str, Any], dict[str, Any], float]]:
     """
     Find candidate pairs of facts across different documents with cosine similarity >= threshold.
+    Uses USearch SIMD index for accelerated search with automatic fallback.
 
     Guards:
       1. a.document_id != b.document_id (never compare facts from the same document)
@@ -126,9 +127,60 @@ def generate_candidate_pairs(
     if existing_pairs is None:
         existing_pairs = set()
 
-    candidates: list[tuple[dict[str, Any], dict[str, Any], float]] = []
     n = len(facts)
+    if n < 2:
+        return []
 
+    # Try fast USearch SIMD index when available
+    valid_indices = [i for i, f in enumerate(facts) if f.get("vector") is not None]
+    if len(valid_indices) >= 2:
+        try:
+            from usearch.index import Index
+
+            vectors = np.array([facts[i]["vector"] for i in valid_indices], dtype=np.float32)
+            ndim = vectors.shape[1]
+            index = Index(ndim=ndim, metric="cos", dtype="f32")
+            index.add(np.arange(len(valid_indices)), vectors)
+
+            # Query top neighbors per vector
+            k = min(len(valid_indices), 50)
+            matches = index.search(vectors, k)
+
+            candidates: list[tuple[dict[str, Any], dict[str, Any], float]] = []
+            seen_pairs: set[tuple[str, str]] = set()
+
+            for i_sub, i_orig in enumerate(valid_indices):
+                fact_a = facts[i_orig]
+                doc_a = fact_a["document_id"]
+                keys = matches.keys[i_sub]
+                distances = matches.distances[i_sub]
+
+                for j_sub, dist in zip(keys, distances):
+                    if j_sub < 0 or j_sub >= len(valid_indices):
+                        continue
+                    j_orig = valid_indices[j_sub]
+                    if j_orig <= i_orig:
+                        continue
+
+                    fact_b = facts[j_orig]
+                    if fact_b["document_id"] == doc_a:
+                        continue
+
+                    pair_key = (min(fact_a["id"], fact_b["id"]), max(fact_a["id"], fact_b["id"]))
+                    if pair_key in existing_pairs or pair_key in seen_pairs:
+                        continue
+
+                    sim = float(1.0 - dist)
+                    if sim >= similarity_threshold:
+                        seen_pairs.add(pair_key)
+                        candidates.append((fact_a, fact_b, sim))
+
+            return candidates
+        except Exception as exc:
+            log.debug("USearch SIMD candidate generation fallback to numpy: %s", exc)
+
+    # Standard NumPy vectorized search fallback
+    candidates = []
     for i in range(n):
         fact_a = facts[i]
         vec_a = fact_a.get("vector")
@@ -137,11 +189,9 @@ def generate_candidate_pairs(
 
         for j in range(i + 1, n):
             fact_b = facts[j]
-            # Guard 1: Never compare facts from the same document
             if fact_a["document_id"] == fact_b["document_id"]:
                 continue
 
-            # Guard 2: Deduplication against existing relationships in either direction
             pair_key = (min(fact_a["id"], fact_b["id"]), max(fact_a["id"], fact_b["id"]))
             if pair_key in existing_pairs:
                 continue
@@ -150,7 +200,6 @@ def generate_candidate_pairs(
             if vec_b is None:
                 continue
 
-            # Cosine similarity of normalized vectors is the dot product
             sim = float(np.dot(vec_a, vec_b))
             if sim >= similarity_threshold:
                 candidates.append((fact_a, fact_b, sim))

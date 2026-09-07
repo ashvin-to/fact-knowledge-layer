@@ -620,13 +620,15 @@ async def get_synthesis_trajectories_route(
         trajectories = run_multi_hop_synthesis(
             conn, min_docs=min_docs, reasoner_client=reasoner, force_refresh=refresh
         )
+        is_heuristic = any("heuristic" in str(t.reasoner_model).lower() for t in trajectories) if trajectories else False
+        mode_val = "heuristic_fallback" if is_heuristic else "llm"
     finally:
         conn.close()
-
 
     return SynthesisResponse(
         total_trajectories=len(trajectories),
         trajectories=trajectories,
+        mode=mode_val,
     )
 
 

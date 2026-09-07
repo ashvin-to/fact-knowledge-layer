@@ -13,6 +13,7 @@ import {
 
 export default function SynthesisView() {
   const [trajectories, setTrajectories] = useState([]);
+  const [mode, setMode] = useState("llm");
   const [loading, setLoading] = useState(false);
   const [minDocs, setMinDocs] = useState(2);
   const [previewFact, setPreviewFact] = useState(null);
@@ -22,6 +23,7 @@ export default function SynthesisView() {
     fetchTrajectories(forceRefresh)
       .then((data) => {
         setTrajectories(data.trajectories || []);
+        setMode(data.mode || (data.trajectories?.some((t) => t.reasoner_model?.includes("heuristic")) ? "heuristic_fallback" : "llm"));
         setLoading(false);
       })
       .catch((err) => {
@@ -69,6 +71,29 @@ export default function SynthesisView() {
           </button>
         </div>
       </div>
+
+      {mode === "heuristic_fallback" && (
+        <div
+          className="heuristic-banner"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            padding: "10px 16px",
+            marginBottom: "16px",
+            background: "rgba(245, 158, 11, 0.12)",
+            border: "1px solid rgba(245, 158, 11, 0.35)",
+            borderRadius: "8px",
+            color: "#f59e0b",
+            fontSize: "13px",
+          }}
+        >
+          <AlertTriangleIcon size={18} />
+          <div>
+            <strong>Heuristic Fallback Active:</strong> Local LLM server was offline or unreachable. Trajectories and chronological progressions are assembled deterministically from SQLite ground-truth facts rather than deep generative LLM summarization.
+          </div>
+        </div>
+      )}
 
 
       {loading ? (

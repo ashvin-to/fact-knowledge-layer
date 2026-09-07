@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
+import os
 from src.db import get_connection, init_db
 from src.main import app
 from starlette.testclient import TestClient
@@ -32,7 +33,8 @@ DATASETS_DIR = Path("/mnt/Storage/superjoin/starter-datasets")
 
 
 def ingest_dataset(target: str = "delhivery"):
-    init_db("facts.db")
+    db_path = os.environ.get("DB_PATH", "facts.db")
+    init_db(db_path)
 
     if target == "all":
         pdf_files = sorted(list(DATASETS_DIR.glob("**/*.pdf")))
@@ -49,11 +51,11 @@ def ingest_dataset(target: str = "delhivery"):
         sys.exit(1)
 
     print(f"\n=======================================================")
-    print(f" 🚀 INGESTING {len(pdf_files)} PDF(S) FROM: {target.upper()}")
+    print(f" INGESTING {len(pdf_files)} PDF(S) INTO DB [{db_path}] FROM: {target.upper()}")
     print(f"=======================================================\n")
 
     uploaded_doc_ids = []
-    conn = get_connection("facts.db")
+    conn = get_connection(db_path)
     force_reingest = "--force" in sys.argv
 
     with TestClient(app) as client:

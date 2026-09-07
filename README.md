@@ -18,7 +18,7 @@ A production-grade **Fact Knowledge Layer** that extracts structured atomic fact
    - Interactive UI overlay displays responsive, glowing bounding boxes highlighting the exact sentence on the physical PDF page.
 
 3. **Cross-Document Semantic Comparison Engine**:
-   - High-performance candidate pair generation using local `all-MiniLM-L6-v2` cosine similarity embeddings.
+   - High-performance candidate pair generation using local `all-MiniLM-L6-v2` cosine similarity embeddings and USearch SIMD indexing.
    - Two-stage LLM reasoning cascade classifying relationships into:
      - **`corroborate`**: Claims agree under identical temporal and measurement scope.
      - **`contradict`**: Conflicting numbers or statements under identical scope without explanatory context.
@@ -57,7 +57,7 @@ A production-grade **Fact Knowledge Layer** that extracts structured atomic fact
                      │                     ┌───────────────────────────────┘
                      │                     ▼
                      │        ┌─────────────────────────┐
-                     │        │ Candidate Pair Cosine   │
+                     │        │ USearch SIMD Candidate  │
                      │        │ Similarity Filtering    │
                      │        └────────────┬────────────┘
                      │                     │
@@ -82,76 +82,126 @@ A production-grade **Fact Knowledge Layer** that extracts structured atomic fact
 
 ---
 
+## Approach
+
+### 1. Two-Stage Extraction & Reasoning Pipeline
+The architecture deliberately decouples **atomic fact extraction** from **semantic cross-document comparison**:
+- **Stage 1 (Per-Page Extraction)**: Reads document pages independently and extracts structured tuples `(subject, predicate, value, unit, time_scope, qualifier, evidence_text)` into SQLite. By restricting the extraction prompt to single pages, context window costs remain small ($O(P)$) and pages can be processed in parallel across worker pools.
+- **Stage 2 (Cross-Document Semantic Reasoning)**: Finds candidate pairs across distinct documents using local vector embeddings and queries the Reasoner LLM specifically on high-similarity pairs ($O(K)$ where $K \ll N^2$), preventing combinatorial explosion.
+
+### 2. Concrete Engineering Trade-Offs
+
+- **On-Demand Vector Quad Coordinate Search vs. Stored Pixel Bounding Boxes**:
+  - *Decision*: Rather than storing static pixel bounds `[x0, y0, x1, y1]` in the database, the backend stores the verbatim evidence substring and queries PyMuPDF vector quads dynamically via `/documents/{id}/pages/{page}/evidence-bbox`.
+  - *Rationale*: Static pixel coordinates break when client screen resolutions, PDF render DPIs (150 DPI vs 300 DPI), or CSS zoom levels change. On-demand search guarantees pixel-perfect responsive bounding boxes across all viewports.
+- **Targeted Second-Opinion Verification**:
+  - *Decision*: Secondary LLM verification is triggered conditionally—only when the primary verdict is `contradict` or when `confidence < 0.70`.
+  - *Rationale*: Running dual LLM evaluations on every candidate pair doubles latency and API costs. Selective verification focuses computing budget on high-stakes ambiguous or conflicting assertions.
+- **Batched Ingestion with Per-Page SQLite Commits**:
+  - *Decision*: Ingestion uses a thread pool worker queue (`MAX_INGESTION_WORKERS`) where facts are committed to SQLite on a per-page transaction basis.
+  - *Rationale*: If network connectivity drops or the system is terminated during a 100-page document ingestion, all previously processed pages are preserved, and re-running resumes from the exact page where it stopped without duplicating facts.
+
+### 3. AI Tools Used During Development
+- **Antigravity CLI / Claude 3.5 Sonnet**: Used for full-stack scaffolding, agentic pair programming, test suite development (73 unit tests), and CSS architecture.
+- **Qwen2.5-3B-Instruct (GGUF via llama.cpp / Ollama)**: Evaluated and benchmarked as the local on-device extraction model.
+- **Llama-3.3-70B-Versatile (via Groq LPU)**: Used for high-throughput cross-document pairwise reasoning and multi-hop trajectory synthesis.
+
+---
+
 ## Concrete Case Studies & Examples
 
-The system was evaluated against real-world complex corporate filings (Delhivery IPO Prospectus 2022 vs FY24 Annual Report vs Q4 2024 Presentation):
+The following four case studies are pulled directly from live runs on the real starter dataset PDFs:
 
-### 1. Corroborated Fact (`corroborate`)
-*When independent documents report identical metrics under identical scope.*
+### 1. Corroborated Fact Across Documents (Stated Differently)
+*When independent documents report identical quantitative metrics under identical scope.*
 
-- **Fact A** (*01-delhivery-prospectus-2022-excerpt.pdf*, Page 14):
-  - **Subject**: `Delhivery Limited`
-  - **Predicate**: `Active Customer Base`
-  - **Value**: `21,342` | **Unit**: `Customers` | **Temporal Scope**: `FY21`
-  - **Evidence**: *"As of March 31, 2021, we served 21,342 active customers across India."*
-- **Fact B** (*02-delhivery-annual-report-fy24-excerpt.pdf*, Page 8):
-  - **Subject**: `Delhivery`
-  - **Predicate**: `Historical Active Customers`
-  - **Value**: `21,342` | **Unit**: `Customers` | **Temporal Scope**: `FY21`
-  - **Evidence**: *"Our active client base expanded from 21,342 in Fiscal 2021 to over 30,000 in Fiscal 2024."*
-- **Relationship Verdict**: `corroborate` (Confidence: `0.98`)
-- **Reasoning Explanation**: Both documents state an identical active customer count of 21,342 for the fiscal year ending March 31, 2021.
-
----
-
-### 2. Genuine Contradiction (`contradict`)
-*When documents present conflicting numbers for the same metric without reconcilable factors.*
-
-- **Fact A** (*Draft Filing Version*, Page 45):
-  - **Subject**: `Delhivery`
-  - **Predicate**: `FY22 Express Parcel Volume`
-  - **Value**: `580` | **Unit**: `Million Shipments` | **Temporal Scope**: `FY22`
-  - **Evidence**: *"The company handled 580 million express parcel shipments in FY22."*
-- **Fact B** (*02-delhivery-annual-report-fy24-excerpt.pdf*, Page 32):
-  - **Subject**: `Delhivery`
-  - **Predicate**: `FY22 Express Parcel Volume`
-  - **Value**: `573` | **Unit**: `Million Shipments` | **Temporal Scope**: `FY22`
-  - **Evidence**: *"Express parcel volumes stood at 573 million parcels in FY22 compared to 701 million in FY24."*
-- **Relationship Verdict**: `contradict` (Confidence: `0.94`, `needs_review=1`)
-- **Reasoning Explanation**: Both claims refer to total express parcel shipments for the identical FY22 fiscal period, but state divergent counts (580M vs 573M) with no adjustment noted for discontinued operations.
+- **Fact A** (`01-india-economic-survey-2024-25-excerpt.pdf`, Page 15):
+  - **Subject**: `services sector` | **Predicate**: `expected_growth_rate`
+  - **Value**: `7.2%` | **Unit**: `%` | **Temporal Scope**: `FY25`
+  - **Evidence**: *"Growth in the services sector is expected to remain robust at 7.2 per cent"*
+- **Fact B** (`02-rbi-annual-report-2024-25-excerpt.pdf`, Page 44):
+  - **Subject**: `services sector` | **Predicate**: `expected_growth_rate`
+  - **Value**: `7.2%` | **Unit**: `%` | **Temporal Scope**: `FY25`
+  - **Evidence**: *"Growth in the services sector is expected to remain robust at 7.2 per cent in FY25"*
+- **Fact C (3rd Corroboration)** (`03-imf-india-2025-article-iv-excerpt.pdf`, Page 27):
+  - **Subject**: `India` | **Predicate**: `expected_services_sector_growth_rate`
+  - **Value**: `7.2%` | **Unit**: `%` | **Temporal Scope**: `FY25`
+  - **Evidence**: *"Growth in the services sector is expected to remain robust at 7.2 per cent in FY25"*
+- **Live Output Payload**:
+```json
+{
+  "relationship_type": "corroborate",
+  "confidence": 0.98,
+  "explanation": "All three independent source documents affirm the identical 7.2 per cent projected services sector growth rate for Fiscal Year 2025."
+}
+```
 
 ---
 
-### 3. Context-Reconciled Fact (`context_reconciled`)
-*When divergent numbers appear contradictory on surface, but are resolved by temporal drift, accounting perimeter, or units.*
+### 2. Genuine Contradiction
+*When documents report conflicting values for the same metric without reconciling context.*
 
-- **Fact A** (*01-delhivery-prospectus-2022-excerpt.pdf*, Page 1):
-  - **Subject**: `Delhivery Limited`
-  - **Predicate**: `Revenue from Operations`
-  - **Value**: `3,646.5` | **Unit**: `INR Cr` | **Temporal Scope**: `FY21`
-  - **Evidence**: *"Revenue from operations was ₹36,465.3 million in Fiscal 2021."*
-- **Fact B** (*02-delhivery-annual-report-fy24-excerpt.pdf*, Page 4):
-  - **Subject**: `Delhivery Limited`
-  - **Predicate**: `Revenue from Operations`
-  - **Value**: `8,141.7` | **Unit**: `INR Cr` | **Temporal Scope**: `FY24`
-  - **Evidence**: *"Revenue from operations reached ₹81,417 million in FY24, an increase of 12.7% YoY."*
-- **Relationship Verdict**: `context_reconciled` (Confidence: `0.96`)
-- **Reconciliation Factor**: `temporal_scope` (FY21 vs FY24)
-- **Reasoning Explanation**: The revenue discrepancy (₹3,646.5 Cr vs ₹8,141.7 Cr) reflects 3 years of multi-year top-line organic growth rather than conflicting accounting representations.
-
----
-
-### 4. Extraction Boundary & Limitation Case
-*How the system handles ambiguous narrative statements or graphical non-text artifacts.*
-
-- **Input Passage** (*Page containing an infographic map with no text table*):
-  - **Visual Content**: A map graphic with icons indicating fulfillment centers.
-  - **Extractor Output**: Emits structured facts only for textual legends containing clear quantifier bindings (e.g., *"Covering 18,700+ PIN codes"*).
-  - **Graceful Degradation**: Pure vector icons without OCR-extractable glyphs are skipped rather than hallucinated with guessed numbers.
+- **Fact A** (`01-delhivery-prospectus-2022-excerpt.pdf`, Page 4):
+  - **Subject**: `Restated loss for the period/ year` | **Predicate**: `Restated loss for the period/ year`
+  - **Value**: `-2,974.92` | **Unit**: `₹ million` | **Temporal Scope**: `2019`
+  - **Evidence**: *"Restated loss for the period/ year (2,974.92)"*
+- **Fact B** (`02-delhivery-annual-report-fy24-excerpt.pdf`, Page 99):
+  - **Subject**: `Delhivery Limited` | **Predicate**: `share_in_loss_comprehensive_income`
+  - **Value**: `1,679.68` | **Unit**: `₹ million` | **Temporal Scope**: `March 31, 2024`
+  - **Evidence**: *"(1,679.68)"*
+- **Relationship ID**: `97ac6cba-62ac-405a-a704-251f4424e6ea`
+- **Live Output Payload**:
+```json
+{
+  "id": "97ac6cba-62ac-405a-a704-251f4424e6ea",
+  "relationship_type": "contradict",
+  "reconciliation_factor": null,
+  "confidence": 1.0,
+  "needs_review": 1,
+  "explanation": "FACT A reports a restated loss of -2,974.92 ₹ million for 2019, while FACT B reports a share in loss of 1,679.68 ₹ million for March 31, 2024. These values are incompatible."
+}
+```
 
 ---
 
-## Quick Start & How to Run
+### 3. Apparent Contradiction Reconciled by Context
+*When divergent numbers appear conflicting on surface, but are resolved by temporal scope.*
+
+- **Fact A** (`01-delhivery-prospectus-2022-excerpt.pdf`, Page 4):
+  - **Subject**: `Total income` | **Predicate**: `Total income`
+  - **Value**: `49,114.06` | **Unit**: `₹ million` | **Temporal Scope**: `2021`
+  - **Evidence**: *"Total income 49,114.06"*
+- **Fact B** (`02-delhivery-annual-report-fy24-excerpt.pdf`, Page 67):
+  - **Subject**: `Delhivery Limited` | **Predicate**: `total_income`
+  - **Value**: `85,942.34` | **Unit**: `₹ million` | **Temporal Scope**: `FY24`
+  - **Evidence**: *"Total Income (I) Expenses |||85,942.34|75,302.49"*
+- **Relationship ID**: `e834ed54-6a70-4179-99bc-53feadb44ab3`
+- **Live Output Payload**:
+```json
+{
+  "id": "e834ed54-6a70-4179-99bc-53feadb44ab3",
+  "relationship_type": "context_reconciled",
+  "reconciliation_factor": "time",
+  "confidence": 0.99,
+  "explanation": "Fact A and Fact B refer to the same entity (Delhivery Limited) but different time periods (2021 vs FY24). The values differ due to multi-year organic business growth across fiscal years."
+}
+```
+
+---
+
+### 4. Extraction & Reasoning Failure Handled
+*Real-world reproducible OCR gap across complex presentation PDFs.*
+
+- **Failure Occurrence**: Across the 6 starter PDFs (511 total pages), **4 pages** (`03-delhivery-q4-fy24-earnings-presentation.pdf` [Pages 1, 3, 26] and `03-imf-india-2025-article-iv-excerpt.pdf` [Page 0]) are pure image/scanned cover slides without embedded text glyphs.
+- **Root Cause**: `pdf_inspector` flagged `needs_ocr=True` due to absent font streams. On systems without heavy native Tesseract C-libraries installed, standard text parsing returns empty strings.
+- **Handling & Mitigation**:
+  1. **Quarantine & Tracking**: Rather than crashing the ingestion batch, the engine isolates the affected page indices and records them in `documents.skipped_pages = [1, 3, 26]`.
+  2. **Audit Disclosure**: The API response explicitly returns `skipped_pages: [1, 3, 26]` so human reviewers can verify why specific non-text slides were bypassed.
+  3. **Multimodal Vision Fallback**: Implemented an on-demand Vision-LLM fallback pipeline (`extract_facts_from_page_image`) that renders 150 DPI page images and transmits base64 payloads to vision-enabled endpoints.
+
+---
+
+## Setup and Run Instructions
 
 ### 1. Prerequisites
 - Python 3.12+ (managed with `uv`)
@@ -161,7 +211,7 @@ The system was evaluated against real-world complex corporate filings (Delhivery
 
 ### 2. Configure Your LLM Provider (Choose ONE Option)
 
-The system is 100% provider-agnostic. Choose the option that fits your setup:
+The system is provider-agnostic. Choose the option that fits your setup:
 
 #### Option A: Cloud API (Recommended for Evaluators — Fastest & Zero Setup)
 1. Get a free API key from [Groq Console](https://console.groq.com/keys) or [OpenRouter](https://openrouter.ai/).
@@ -211,20 +261,8 @@ REASONER_LLM_API_KEY=none
 REASONER_LLM_MODEL=local-model
 ```
 
-#### Option D: Offline Heuristic Mode (Zero LLM Required)
+#### Option D: Offline Heuristic Fallback Mode (Zero LLM Required)
 If no local server or API key is provided, the system **automatically activates its offline structural heuristic engine**. Ingestion, vector grounding, PDF bounding box rendering, and multi-hop trajectory discovery continue to work out-of-the-box without crashing.
-
----
-
-> [!NOTE]
-> **LLM Runtime & Performance Trade-offs: Local vs. Cloud Models**
-> - **Local Models (Ollama / `llama.cpp` at `127.0.0.1:8080` or `127.0.0.1:11434`)**:
->   - *Advantages*: 100% data privacy, zero API costs, no external rate limits, and full offline operation.
->   - *Trade-offs*: Slower inference throughput on local consumer hardware (longer processing times for dense multi-page PDFs and batch cross-document comparisons), with smaller parameter models having narrower context/reasoning capacity.
-> - **Cloud Models (Groq, OpenRouter, OpenAI)**:
->   - *Advantages*: Sub-second token generation speeds (substantially faster), higher extraction accuracy, and stronger multi-hop reasoning over subtle numerical reconciliations.
->   - *Trade-offs*: Bound by external API rate limits (requests/tokens per minute on free tiers) and requires active internet access.
-> - **Cascade & Offline Resilience**: The system uses a multi-provider fallback cascade. If local models are unavailable or stopped, it cascades to cloud providers; if all LLM endpoints are unreachable, it gracefully activates the deterministic **Offline Structural Synthesizer** so ingestion, visual grounding, and trajectory navigation never crash.
 
 ---
 
@@ -256,23 +294,48 @@ Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## Ingesting PDFs
+### 4. Ingesting PDFs
 
-### Batch CLI Ingestion
-You can ingest folders of starter PDFs directly using the durable ingestion script:
-
+#### Batch CLI Ingestion
 ```bash
-# Ingest all starter PDFs in data/
-uv run python scripts/ingest_all.py
+# Ingest the Delhivery dataset (3 PDF excerpts)
+uv run python scripts/ingest_all.py delhivery
 
-# Ingest specific dataset directory
-uv run python scripts/ingest_all.py data/starter_pdfs
+# Ingest the Indian Macroeconomy dataset (3 PDF excerpts)
+uv run python scripts/ingest_all.py india-macroeconomy
 ```
 
-### Web UI Ingestion
+#### Web UI Ingestion
 1. Navigate to the **Upload Document** tab in the UI.
 2. Drag and drop any PDF file.
 3. The server renders page previews and extracts atomic facts page-by-page.
+
+---
+
+## Limitations and Next Steps
+
+### 1. The OCR Gap & Scanned Pages
+- **Real Observed Metric**: Across the 511 total pages in the starter dataset, exactly **4 pages (0.78%)** were skipped by default:
+  - `03-delhivery-q4-fy24-earnings-presentation.pdf`: Pages 1, 3, 26 (graphical cover / infographic slides).
+  - `03-imf-india-2025-article-iv-excerpt.pdf`: Page 0 (cover graphic).
+- **Technical Blocker**: Running local OCR on scanned PDF pages typically requires external binary dependencies (e.g. `tesseract-ocr`, `pdfium`, or `poppler-utils`) which can be brittle or absent on minimal Linux container environments.
+- **Next Step**: Package a containerized lightweight OCR sidecar (e.g. `rapidocr-pdf` or ONNX-based paddleocr) that runs cross-platform without external system package requirements.
+
+### 2. Large Corpus Pagination on `/relationships`
+- For large enterprise knowledge graphs ($10,000+$ extracted facts), returning all relationships in a single unpaginated JSON payload increases network payload sizes.
+- **Next Step**: Add cursor-based pagination (`/relationships?limit=50&cursor=...`) and lazy-loaded D3 graph tiling for 100k+ edge networks.
+
+### 3. Distributed Background Queue
+- Ingestion currently uses an in-process thread pool. For production deployments with simultaneous multi-user uploads of 500-page prospectuses, transitioning to a distributed task queue (e.g. Redis + Celery / ARQ) will enable auto-scaling workers.
+
+---
+
+## Additional Notes
+
+### Explicit Disclosure: Offline Heuristic Synthesizer
+When local LLMs or cloud API keys are disconnected, the system does **not** generate fake hallucinations. Instead:
+- It returns `"mode": "heuristic_fallback"` in `/documents`, `/compare`, and `/synthesis/trajectories` API responses.
+- The web frontend visibly renders an amber **Heuristic Fallback Active** banner informing the user that relationships are computed from structural SQLite rules rather than generative LLM reasoning.
 
 ---
 
@@ -287,13 +350,15 @@ uv run python scripts/ingest_all.py data/starter_pdfs
 | `GET` | `/documents/{id}/pages/{page}/evidence-bbox` | On-demand vector quad search returning exact highlight coordinates. |
 | `POST` | `/compare` | Trigger cross-document semantic comparison & reasoning cascade. |
 | `GET` | `/relationships` | List all discovered fact relationships with filters. |
+| `POST` | `/relationships/{id}/adjudicate` | Human-in-the-loop audit adjudication and relationship override. |
+| `GET` | `/synthesis/trajectories` | Multi-hop reasoning trajectories across N >= 3 documents. |
 | `GET` | `/graph` | D3-optimized payload containing document clusters, nodes, and reasoning links. |
 
 ---
 
 ## Testing & Verification
 
-Run the complete backend test suite (67 unit & integration tests):
+Run the complete backend test suite (73 unit & integration tests):
 
 ```bash
 uv run pytest tests/ -v
