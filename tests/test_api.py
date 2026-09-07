@@ -180,3 +180,50 @@ class TestGetFacts:
         body = resp.json()
         assert body["document_id"] == "doc-empty"
         assert body["facts"] == []
+
+
+class TestGetGraph:
+    def test_returns_graph_nodes_and_links(self, client) -> None:
+        import src.main as m
+        from src.db import get_connection, insert_document, insert_fact
+        conn = get_connection(m._DB_PATH)
+        insert_document(conn, {
+            "id": "doc-graph-1",
+            "filename": "graph_test.pdf",
+            "storage_path": "/tmp/graph_test.pdf",
+            "upload_time": "2026-01-01T00:00:00+00:00",
+            "page_count": 1,
+            "pdf_type": "text_based",
+            "classification_confidence": 0.99,
+            "status": "done",
+            "skipped_pages": "[]",
+            "failed_pages": "[]",
+            "error_message": None,
+        })
+        insert_fact(conn, {
+            "id": "fact-graph-1",
+            "document_id": "doc-graph-1",
+            "subject": "Delhivery",
+            "predicate": "fleet_size",
+            "value": "15000",
+            "value_type": "numeric",
+            "unit": "vehicles",
+            "time_scope": "2024",
+            "qualifier": None,
+            "confidence": 0.95,
+            "pdf_page_index": 0,
+            "evidence_text": "fleet size of 15000 vehicles",
+            "extraction_method": "test",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        })
+        conn.commit()
+        conn.close()
+
+        resp = client.get("/graph")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "nodes" in data
+        assert "links" in data
+        assert len(data["nodes"]) == 2  # 1 doc + 1 fact
+        assert len(data["links"]) == 1  # 1 contains link
+

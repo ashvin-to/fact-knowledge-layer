@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { uploadDocument, fetchDocument } from "../api";
+import {
+  UploadIcon,
+  CheckIcon,
+  AlertTriangleIcon,
+  ArrowRightIcon,
+  FileTextIcon,
+} from "./Icons";
 
 export default function UploadView({ onUploadComplete, onSelectDoc }) {
   const [file, setFile] = useState(null);
@@ -8,15 +15,21 @@ export default function UploadView({ onUploadComplete, onSelectDoc }) {
   const [error, setError] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  // Poll document status if processing
+  // Poll document status while processing
   useEffect(() => {
-    if (!processingDoc || processingDoc.status === "done" || processingDoc.status === "failed") {
+    if (
+      !processingDoc ||
+      processingDoc.status === "done" ||
+      processingDoc.status === "failed"
+    ) {
       return;
     }
 
     const interval = setInterval(async () => {
       try {
-        const doc = await fetchDocument(processingDoc.id || processingDoc.document_id);
+        const doc = await fetchDocument(
+          processingDoc.id || processingDoc.document_id
+        );
         setProcessingDoc(doc);
         if (doc.status === "done" || doc.status === "failed") {
           setUploading(false);
@@ -43,7 +56,10 @@ export default function UploadView({ onUploadComplete, onSelectDoc }) {
     setIsDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const droppedFile = e.dataTransfer.files[0];
-      if (droppedFile.type === "application/pdf" || droppedFile.name.endsWith(".pdf")) {
+      if (
+        droppedFile.type === "application/pdf" ||
+        droppedFile.name.endsWith(".pdf")
+      ) {
         setFile(droppedFile);
         setError(null);
       } else {
@@ -73,14 +89,24 @@ export default function UploadView({ onUploadComplete, onSelectDoc }) {
 
   return (
     <div className="upload-view">
-      <div className="card upload-card">
-        <h2>Upload Document for Fact Extraction</h2>
-        <p className="description">
-          Upload any business report, prospectus, or financial statement PDF. The pipeline will classify the document, extract atomic facts with page grounding, and make them available for cross-document comparison.
-        </p>
+      <div className="view-head">
+        <div>
+          <div className="view-title">
+            <UploadIcon size={20} /> Upload Document
+          </div>
+          <p className="view-desc">
+            Ingest a business report, prospectus, or financial statement. The
+            pipeline classifies the layout, extracts atomic facts with page
+            grounding, and prepares them for cross-document comparison.
+          </p>
+        </div>
+      </div>
 
+      <div className="card card--pad upload-card">
         <div
-          className={`dropzone ${isDragOver ? "dragover" : ""} ${file ? "has-file" : ""}`}
+          className={`dropzone ${isDragOver ? "dragover" : ""} ${
+            file ? "has-file" : ""
+          }`}
           onDragOver={(e) => {
             e.preventDefault();
             setIsDragOver(true);
@@ -96,69 +122,105 @@ export default function UploadView({ onUploadComplete, onSelectDoc }) {
             disabled={uploading}
           />
           <label htmlFor="pdf-input" className="dropzone-label">
-            <span className="drop-icon">📄</span>
+            <div className="drop-icon-box">
+              {file ? <FileTextIcon size={30} /> : <UploadIcon size={30} />}
+            </div>
             {file ? (
-              <span className="file-name">{file.name} ({ (file.size / 1024).toFixed(1) } KB)</span>
+              <div className="file-info">
+                <span className="file-name">{file.name}</span>
+                <span className="file-size">
+                  {(file.size / 1024 / 1024).toFixed(2)} MB — click to replace
+                </span>
+              </div>
             ) : (
-              <span>Drag & drop a PDF here, or <strong>browse file</strong></span>
+              <div className="drop-prompt">
+                <span className="drop-title">
+                  Click to select or drag &amp; drop a PDF
+                </span>
+                <span className="drop-hint">PDF up to 100 MB</span>
+              </div>
             )}
           </label>
         </div>
 
-        {error && <div className="alert alert-error">{error}</div>}
-
-        <div className="upload-actions">
-          <button
-            className="btn btn-primary"
-            onClick={handleUpload}
-            disabled={!file || uploading}
-          >
-            {uploading ? "Processing PDF..." : "Extract Facts from PDF"}
-          </button>
-        </div>
-
-        {uploading && (
-          <div className="processing-indicator">
-            <div className="spinner"></div>
-            <div className="processing-text">
-              <h4>Extracting facts page-by-page...</h4>
-              <p>LLM is grounding atomic facts to exact verbatim evidence.</p>
-            </div>
+        {error && (
+          <div className="alert alert--bad mt-4">
+            <AlertTriangleIcon size={16} />
+            <span>{error}</span>
           </div>
         )}
 
-        {processingDoc && processingDoc.status === "done" && (
-          <div className="result-summary card">
-            <h3>✓ Ingestion Complete!</h3>
-            <div className="stats-grid">
-              <div className="stat-box">
-                <span className="stat-label">Document</span>
-                <span className="stat-val">{processingDoc.filename}</span>
-              </div>
-              <div className="stat-box">
-                <span className="stat-label">Total Facts Extracted</span>
-                <span className="stat-val highlight">{processingDoc.fact_count ?? "Ready"}</span>
-              </div>
-              <div className="stat-box">
-                <span className="stat-label">Total Pages</span>
-                <span className="stat-val">{processingDoc.page_count ?? "—"}</span>
-              </div>
-              <div className="stat-box">
-                <span className="stat-label">PDF Type</span>
-                <span className="stat-val">{processingDoc.pdf_type ?? "text_based"}</span>
-              </div>
+        <div className="upload-actions">
+          <button
+            className="btn btn--primary btn--lg"
+            onClick={handleUpload}
+            disabled={!file || uploading}
+          >
+            {uploading ? (
+              <>
+                <span className="spinner spinner--sm" /> Ingesting &amp;
+                extracting facts…
+              </>
+            ) : (
+              <>
+                <UploadIcon size={18} /> Process Document
+              </>
+            )}
+          </button>
+        </div>
+
+        {processingDoc && (
+          <div className="processing-status card--pad card mt-4">
+            <div className="status-header">
+              <h4>Processing Status</h4>
+              <span className={`badge badge--status-${processingDoc.status}`}>
+                {processingDoc.status}
+              </span>
             </div>
 
-            {processingDoc.skipped_pages?.length > 0 && (
-              <p className="note">Skipped OCR/scanned pages: {processingDoc.skipped_pages.join(", ")}</p>
+            {processingDoc.status === "processing" && (
+              <div className="progress-info">
+                <div className="spinner" />
+                <p>
+                  Classifying layout, rendering pages, and extracting atomic
+                  facts…
+                </p>
+              </div>
             )}
 
-            <button
-              className="btn btn-secondary"
-              onClick={() => onSelectDoc(processingDoc.id || processingDoc.document_id)}
-            >
-              Browse Extracted Facts →
-            </button>
+            {processingDoc.status === "done" && (
+              <div className="done-summary">
+                <div className="alert alert--ok">
+                  <CheckIcon size={18} />
+                  <span>
+                    Extraction complete —{" "}
+                    <strong>{processingDoc.fact_count}</strong> facts across{" "}
+                    <strong>{processingDoc.page_count}</strong> pages.
+                  </span>
+                </div>
+                <div className="action-row mt-3">
+                  <button
+                    className="btn btn--primary"
+                    onClick={() =>
+                      onSelectDoc &&
+                      onSelectDoc(processingDoc.id || processingDoc.document_id)
+                    }
+                  >
+                    Browse Extracted Facts <ArrowRightIcon size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {processingDoc.status === "failed" && (
+              <div className="alert alert--bad">
+                <AlertTriangleIcon size={18} />
+                <span>
+                  Processing failed:{" "}
+                  {processingDoc.error_message || "Unknown error"}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are an expert fact-extraction engine. Your job is to extract all discrete, atomic facts, statistics, financial figures, counts, team sizes, technology metrics, table rows, and entity attributes from the provided document page.
+You are an expert fact-extraction engine. Your job is to extract all discrete, atomic facts, statistics, financial figures, percentages, counts, team sizes, technology metrics, table rows, and entity attributes from the provided document page.
 
 Rules:
 1. Output ONLY a valid JSON array — no prose, no markdown fences, no commentary.
@@ -50,9 +50,67 @@ Rules:
      "evidence_text":"<verbatim substring copied EXACTLY from the page content>"
    }
 3. evidence_text MUST be an exact verbatim substring from the page text provided.
-4. TABLE & NARRATIVE EXTRACTION: Extract facts from both tables and narrative paragraphs. If the text mentions numbers (e.g. 'team of 505 professionals', 'over 80 applications', '3,730 delivery centres'), you MUST extract each into a fact object!
+4. TABLE & NARRATIVE EXTRACTION: Extract facts from BOTH tables and narrative paragraphs. If the text mentions numbers, metrics, percentages, capacities, or milestones (e.g. 'team of 505 professionals', 'revenues grew by 31%', 'share crossed 70%'), you MUST extract each into a fact object!
 5. If and only if a page has ZERO factual statements or data (e.g. pure table of contents without numbers, or blank page), return []. If the page contains any facts, numbers, or claims, you MUST extract them.
-6. Do not invent facts not present in the text.\
+6. Do not invent facts not present in the text.
+
+Example Input 1 (Corporate / Financial):
+"Our part truckload tonnage grew by 30%, and revenues from part truckload grew by 31% in FY24. The share of load carried through fuel-efficient 46-ft tractor trailers crossed 70% by the end of FY24."
+
+Example Output 1:
+[
+  {
+    "subject": "Delhivery Part Truckload Tonnage",
+    "predicate": "growth_rate",
+    "value": "30%",
+    "value_type": "numeric",
+    "unit": "%",
+    "time_scope": "FY24",
+    "qualifier": null,
+    "confidence": 0.95,
+    "evidence_text": "Our part truckload tonnage grew by 30%"
+  },
+  {
+    "subject": "Delhivery Part Truckload Revenue",
+    "predicate": "growth_rate",
+    "value": "31%",
+    "value_type": "numeric",
+    "unit": "%",
+    "time_scope": "FY24",
+    "qualifier": null,
+    "confidence": 0.95,
+    "evidence_text": "revenues from part truckload grew by 31% in FY24"
+  }
+]
+
+Example Input 2 (Macroeconomic / Policy):
+"Growth in the services sector is expected to remain robust at 7.2 per cent in FY25, driven by financial and professional services, while trade-restrictive measures now affect 12.7 per cent of G20 imports."
+
+Example Output 2:
+[
+  {
+    "subject": "Services sector",
+    "predicate": "expected_growth_rate",
+    "value": "7.2%",
+    "value_type": "numeric",
+    "unit": "%",
+    "time_scope": "FY25",
+    "qualifier": null,
+    "confidence": 0.95,
+    "evidence_text": "Growth in the services sector is expected to remain robust at 7.2 per cent"
+  },
+  {
+    "subject": "G20 imports",
+    "predicate": "trade_restrictive_measures_coverage",
+    "value": "12.7%",
+    "value_type": "numeric",
+    "unit": "%",
+    "time_scope": null,
+    "qualifier": "trade-restrictive measures",
+    "confidence": 0.95,
+    "evidence_text": "now affecting 12.7 per cent of G20 imports"
+  }
+]\
 """
 
 _USER_TEMPLATE = """\
@@ -143,6 +201,82 @@ def extract_facts_from_page(
         }
         for fe in extractions
     ]
+
+
+def extract_facts_from_page_image(
+    page_image_bytes: bytes,
+    page_index: int,
+    document_id: str,
+    llm_client: LLMClient,
+) -> list[dict]:
+    """
+    Extract facts directly from a rendered PDF page image (e.g. scanned pages, infographics, complex chart plots)
+    using a Vision-capable LLM prompt with base64 image encoding.
+    """
+    import base64
+
+    b64_img = base64.b64encode(page_image_bytes).decode("utf-8")
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Extract all discrete atomic facts, statistics, table rows, and chart data points from Page {page_index + 1}. "
+                        "Return ONLY the JSON array."
+                    ),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{b64_img}",
+                    },
+                },
+            ],
+        },
+    ]
+
+    raw = llm_client.chat(messages, max_tokens=3000)
+    extractions, error = _parse_response(raw)
+    if error is not None:
+        log.warning("Vision page %d: parse error: %s", page_index, error)
+        messages.append({"role": "assistant", "content": raw})
+        messages.append({
+            "role": "user",
+            "content": f"Previous response had error:\n{error}\nPlease return ONLY the corrected JSON array.",
+        })
+        raw2 = llm_client.chat(messages, max_tokens=3000)
+        extractions, error2 = _parse_response(raw2)
+        if error2 is not None:
+            raise FactExtractionPageError(f"Vision Page {page_index}: invalid after retry: {error2}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    last = getattr(llm_client, "last_model_used", None)
+    used_model = last if isinstance(last, str) else str(getattr(llm_client, "model", "default"))
+    extraction_method = f"vision:{used_model}"
+
+    return [
+        {
+            "id": str(uuid.uuid4()),
+            "document_id": document_id,
+            "subject": fe.subject,
+            "predicate": fe.predicate,
+            "value": fe.value,
+            "value_type": fe.value_type,
+            "unit": fe.unit,
+            "time_scope": fe.time_scope,
+            "qualifier": fe.qualifier,
+            "confidence": fe.confidence,
+            "pdf_page_index": page_index,
+            "evidence_text": fe.evidence_text,
+            "extraction_method": extraction_method,
+            "created_at": now,
+        }
+        for fe in extractions
+    ]
+
 
 
 # ---------------------------------------------------------------------------

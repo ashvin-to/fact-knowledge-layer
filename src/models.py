@@ -167,8 +167,20 @@ class FactRelationshipItem(BaseModel):
     second_opinion_verdict: Optional[str] = None
     second_opinion_model: Optional[str] = None
     created_at: str
+    user_adjudication_status: Optional[str] = None
+    user_notes: Optional[str] = None
+    user_adjudicated_at: Optional[str] = None
     fact_a: InlinedFactDetail
     fact_b: InlinedFactDetail
+
+
+class AdjudicateRequest(BaseModel):
+    """Request body for POST /relationships/{id}/adjudicate."""
+
+    relationship_type: RelationshipType
+    status: Literal["accepted", "overruled", "modified"] = "accepted"
+    notes: Optional[str] = None
+    reconciliation_factor: Optional[str] = None
 
 
 class CompareRequest(BaseModel):
@@ -209,10 +221,12 @@ class EvidenceBBoxResponse(BaseModel):
     """Response body for GET /documents/{id}/pages/{page}/evidence-bbox."""
 
     bboxes: list[BBoxItem]
+    rects: list[BBoxItem] = []
     page_width: float
     page_height: float
     normalized_query: str
-    match_type: Literal["exact", "fallback_prefix", "none"]
+    match_type: str = "exact"
+    match_method: Optional[str] = None
 
 
 class DocumentListItem(BaseModel):
@@ -234,4 +248,48 @@ class DocumentListResponse(BaseModel):
     """Response body for GET /documents."""
 
     documents: list[DocumentListItem]
+
+
+# ---------------------------------------------------------------------------
+# Multi-Hop Reasoning & Synthesis models
+# ---------------------------------------------------------------------------
+
+class TrajectoryHop(BaseModel):
+    """A single step / document node in a multi-hop reasoning chain."""
+
+    fact_id: str
+    document_id: str
+    document_filename: str
+    pdf_page_index: int
+    subject: str
+    predicate: str
+    value: str
+    unit: Optional[str] = None
+    time_scope: Optional[str] = None
+    qualifier: Optional[str] = None
+    evidence_text: str
+    confidence: float
+
+
+class TrajectoryItem(BaseModel):
+    """A cross-document fact chain / trajectory across N >= 3 documents."""
+
+    id: str
+    title: str
+    metric: str
+    document_count: int
+    hops: list[TrajectoryHop]
+    synthesis_narrative: str
+    key_findings: list[str] = []
+    discrepancies: list[str] = []
+    confidence: float
+    reasoner_model: str
+
+
+class SynthesisResponse(BaseModel):
+    """Response body for GET /synthesis/trajectories."""
+
+    total_trajectories: int
+    trajectories: list[TrajectoryItem]
+
 

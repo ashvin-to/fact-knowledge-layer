@@ -84,7 +84,23 @@ CREATE TABLE IF NOT EXISTS failed_page_contents (
     page_markdown      TEXT NOT NULL,
     created_at         TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS synthesized_trajectories (
+    id                   TEXT PRIMARY KEY,
+    cluster_hash         TEXT UNIQUE NOT NULL,
+    metric               TEXT NOT NULL,
+    title                TEXT NOT NULL,
+    document_count       INTEGER NOT NULL,
+    synthesis_narrative  TEXT NOT NULL,
+    key_findings         TEXT NOT NULL,
+    discrepancies        TEXT NOT NULL,
+    confidence           REAL NOT NULL,
+    reasoner_model       TEXT NOT NULL,
+    hops_json            TEXT NOT NULL,
+    created_at           TEXT NOT NULL
+);
 """
+
 
 
 def init_db(db_path: str | Path) -> None:
@@ -99,6 +115,18 @@ def init_db(db_path: str | Path) -> None:
             conn.execute("ALTER TABLE facts ADD COLUMN embedding BLOB")
         if "embedding_model" not in cols:
             conn.execute("ALTER TABLE facts ADD COLUMN embedding_model TEXT")
+
+        # Migrate existing fact_relationships table if missing adjudication columns
+        r_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(fact_relationships)").fetchall()
+        }
+        if "user_adjudication_status" not in r_cols:
+            conn.execute("ALTER TABLE fact_relationships ADD COLUMN user_adjudication_status TEXT")
+        if "user_notes" not in r_cols:
+            conn.execute("ALTER TABLE fact_relationships ADD COLUMN user_notes TEXT")
+        if "user_adjudicated_at" not in r_cols:
+            conn.execute("ALTER TABLE fact_relationships ADD COLUMN user_adjudicated_at TEXT")
+
         conn.commit()
 
 
@@ -350,6 +378,9 @@ def get_relationships_inlined(
             r.second_opinion_verdict,
             r.second_opinion_model,
             r.created_at,
+            r.user_adjudication_status,
+            r.user_notes,
+            r.user_adjudicated_at,
             -- Fact A
             fa.id AS fa_id,
             fa.document_id AS fa_doc_id,
@@ -416,6 +447,9 @@ def get_relationships_inlined(
             "second_opinion_verdict": r["second_opinion_verdict"],
             "second_opinion_model": r["second_opinion_model"],
             "created_at": r["created_at"],
+            "user_adjudication_status": r["user_adjudication_status"],
+            "user_notes": r["user_notes"],
+            "user_adjudicated_at": r["user_adjudicated_at"],
             "fact_a": {
                 "id": r["fa_id"],
                 "document_id": r["fa_doc_id"],
@@ -447,8 +481,41 @@ def get_relationships_inlined(
                 "evidence_text": r["fb_evidence_text"],
             },
         })
-
     return results
+
+
+def adjudicate_relationship(
+    conn: sqlite3.Connection,
+    relationship_id: str,
+    relationship_type: str,
+    user_adjudication_status: str,
+    user_notes: str | None = None,
+    reconciliation_factor: str | None = None,
+) -> None:
+    """Update relationship with human auditor verdict, notes, and clear needs_review."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        UPDATE fact_relationships
+        SET relationship_type = ?,
+            user_adjudication_status = ?,
+            user_notes = ?,
+            reconciliation_factor = COALESCE(?, reconciliation_factor),
+            needs_review = 0,
+            user_adjudicated_at = ?
+        WHERE id = ?
+        """,
+        (
+            relationship_type,
+            user_adjudication_status,
+            user_notes,
+            reconciliation_factor,
+            now,
+            relationship_id,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

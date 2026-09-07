@@ -212,3 +212,55 @@ class TestCompareApi:
         rels = resp.json()["relationships"]
         assert len(rels) == 1
         assert rels[0]["fact_a"]["id"] == "fact-1"
+
+    def test_adjudicate_relationship(self, client, tmp_path) -> None:
+        _insert_test_data(tmp_path / "test.db")
+
+        mock_primary = json.dumps({
+            "relationship_type": "contradict",
+            "explanation": "Different growth numbers",
+            "confidence": 0.65,
+            "reconciliation_factor": None,
+        })
+        mock_second = json.dumps({
+            "relationship_type": "context_reconciled",
+            "explanation": "Reconciled by period",
+            "confidence": 0.85,
+            "reconciliation_factor": "time",
+        })
+
+        m_reasoner = MagicMock()
+        m_reasoner.chat.return_value = mock_primary
+        m_verifier = MagicMock()
+        m_verifier.chat.return_value = mock_second
+
+        with patch("src.main.get_reasoner_client", return_value=m_reasoner), \
+             patch("src.main.get_extractor_client", return_value=m_verifier):
+            client.post("/compare")
+
+        rels = client.get("/relationships").json()["relationships"]
+        assert len(rels) == 1
+        rel_id = rels[0]["id"]
+        assert rels[0]["relationship_type"] == "contradict"
+        assert rels[0]["needs_review"] == 1
+
+        # Human auditor overrides to context_reconciled
+        adj_resp = client.post(
+            f"/relationships/{rel_id}/adjudicate",
+            json={
+                "relationship_type": "context_reconciled",
+                "status": "overruled",
+                "notes": "Reconciled due to advance estimate revision",
+                "reconciliation_factor": "advance_estimate",
+            },
+        )
+        assert adj_resp.status_code == 200
+        assert adj_resp.json()["status"] == "ok"
+
+        # Verify updated relationship in DB
+        updated_rels = client.get("/relationships").json()["relationships"]
+        assert len(updated_rels) == 1
+        assert updated_rels[0]["relationship_type"] == "context_reconciled"
+        assert updated_rels[0]["needs_review"] == 0
+        assert updated_rels[0]["user_adjudication_status"] == "overruled"
+        assert updated_rels[0]["user_notes"] == "Reconciled due to advance estimate revision"

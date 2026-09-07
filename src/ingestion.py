@@ -34,8 +34,16 @@ from pathlib import Path
 
 import pdf_inspector
 
-from .db import encode_int_list, insert_fact, insert_failed_page, update_document
-from .extraction import FactExtractionPageError, extract_facts_from_page
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
+import fitz
+
+from .db import decode_int_list, encode_int_list, get_document, insert_fact, insert_failed_page, update_document
+from .extraction import (
+    FactExtractionPageError,
+    extract_facts_from_page,
+    extract_facts_from_page_image,
+)
 from .llm_client import LLMClient
 
 log = logging.getLogger(__name__)
@@ -44,22 +52,71 @@ log = logging.getLogger(__name__)
 _FULLY_IMAGE_TYPES = {"scanned", "image_based"}
 
 
+def _process_single_page(
+    page: Any,
+    path_str: str,
+    document_id: str,
+    llm_client: LLMClient,
+) -> tuple[int, list[dict], str | None, bool]:
+    """
+    Process one page.
+    Returns (page_index, facts_list, error_message_or_None, was_skipped).
+    """
+    page_index: int = page.page
+
+    # Check if page needs vision fallback
+    if page.needs_ocr:
+        try:
+            doc = fitz.open(path_str)
+            if page_index < len(doc):
+                pix = doc[page_index].get_pixmap(dpi=150)
+                img_bytes = pix.tobytes("png")
+                doc.close()
+                facts = extract_facts_from_page_image(
+                    page_image_bytes=img_bytes,
+                    page_index=page_index,
+                    document_id=document_id,
+                    llm_client=llm_client,
+                )
+                if facts:
+                    return page_index, facts, None, False
+        except Exception as exc:
+            log.info("Vision fallback for page %d yielded no facts: %s", page_index, exc)
+
+        return page_index, [], None, True  # Skipped OCR
+
+    if not page.markdown or not page.markdown.strip():
+        return page_index, [], None, False  # Blank page ignored silently
+
+    try:
+
+        facts = extract_facts_from_page(
+            page_markdown=page.markdown,
+            page_index=page_index,
+            document_id=document_id,
+            llm_client=llm_client,
+        )
+        return page_index, facts, None, False
+    except FactExtractionPageError as exc:
+        return page_index, [], str(exc), False
+
+
 def process_pdf(
     pdf_path: Path,
     document_id: str,
     conn: sqlite3.Connection,
     llm_client: LLMClient,
+    max_workers: int | None = None,
 ) -> None:
     """
     Full ingestion pipeline for one PDF.
 
     Reads the PDF, classifies it, extracts facts page-by-page, and persists
-    everything.  The document row must already exist in the DB with
-    status='pending'.  This function updates it to 'processing' → 'done'
+    everything. The document row must already exist in the DB with
+    status='pending'. This function updates it to 'processing' → 'done'
     (or 'failed').
 
-    All DB writes are committed after each page so partial progress is
-    durable.
+    All DB writes are committed per-page/batch so partial progress is durable.
     """
     path_str = str(pdf_path)
 
@@ -133,64 +190,59 @@ def process_pdf(
     pages = extraction_result.pages  # list[PageMarkdown], 0-indexed .page
 
     # ------------------------------------------------------------------
-    # 5. Iterate pages
+    # 5. Process pages with parallel worker pool & per-page durability
     # ------------------------------------------------------------------
-    skipped_pages: list[int] = []
+    processed_pages = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT pdf_page_index FROM facts WHERE document_id = ?",
+            (document_id,),
+        ).fetchall()
+    }
+
+    existing_doc = get_document(conn, document_id)
+    skipped_pages: list[int] = (
+        decode_int_list(existing_doc["skipped_pages"]) if existing_doc and existing_doc["skipped_pages"] else []
+    )
     failed_pages: list[int] = []
 
-    # Resume support: skip directly to the next unprocessed page after last saved fact
-    max_page_row = conn.execute(
-        "SELECT MAX(pdf_page_index) FROM facts WHERE document_id = ?",
-        (document_id,),
-    ).fetchone()
-    last_processed_page = (
-        max_page_row[0] if (max_page_row and max_page_row[0] is not None) else -1
-    )
-    if last_processed_page >= 0:
-        log.info(
-            "Document %s has facts up to page %d — resuming from page %d.",
-            document_id,
-            last_processed_page,
-            last_processed_page + 1,
-        )
+    pages_to_process = [p for p in pages if p.page not in processed_pages]
 
-    for page in pages:
-        page_index: int = page.page  # 0-indexed
-
-        # Fast forward directly past already-processed pages
-        if page_index <= last_processed_page:
-            continue
-
-        # Skip OCR-needed pages (unreliable / image-only text)
-        if page.needs_ocr:
-            log.info("Page %d needs OCR — skipping.", page_index)
-            skipped_pages.append(page_index)
-            continue
-
-        # Skip blank / whitespace-only pages silently
-        if not page.markdown or not page.markdown.strip():
-            log.debug("Page %d is blank — skipping silently.", page_index)
-            continue
-
-        # Extract facts
+    if max_workers is None:
+        env_w = os.environ.get("MAX_INGESTION_WORKERS", "1")
         try:
-            facts = extract_facts_from_page(
-                page_markdown=page.markdown,
-                page_index=page_index,
-                document_id=document_id,
-                llm_client=llm_client,
+            max_workers = max(1, int(env_w))
+        except ValueError:
+            max_workers = 1
+
+    # Sequential or thread pool processing
+    if max_workers <= 1 or len(pages_to_process) <= 1:
+        for page in pages_to_process:
+            page_index, facts, error_msg, was_skipped = _process_single_page(
+                page, path_str, document_id, llm_client
             )
-        except FactExtractionPageError as exc:
-            log.warning("Page %d fact extraction failed: %s", page_index, exc)
-            failed_pages.append(page_index)
-            insert_failed_page(
-                conn,
-                document_id=document_id,
-                pdf_page_index=page_index,
-                error_message=str(exc),
-                page_markdown=page.markdown,
-            )
-            # Persist skipped/failed progress so far and continue
+            if was_skipped:
+                if page_index not in skipped_pages:
+                    skipped_pages.append(page_index)
+            elif error_msg:
+                log.warning("Page %d extraction failed: %s", page_index, error_msg)
+                failed_pages.append(page_index)
+                insert_failed_page(
+                    conn,
+                    document_id=document_id,
+                    pdf_page_index=page_index,
+                    error_message=error_msg,
+                    page_markdown=page.markdown or "",
+                )
+            else:
+                for fact in facts:
+                    insert_fact(conn, fact)
+                conn.execute(
+                    "DELETE FROM failed_page_contents WHERE document_id = ? AND pdf_page_index = ?",
+                    (document_id, page_index),
+                )
+                log.info("Page %d: inserted %d fact(s).", page_index, len(facts))
+
             update_document(
                 conn,
                 document_id,
@@ -198,40 +250,42 @@ def process_pdf(
                 failed_pages=encode_int_list(failed_pages),
             )
             conn.commit()
-            continue
-        except Exception as exc:
-            log.exception(
-                "Unexpected error on page %d for document %s", page_index, document_id
-            )
-            failed_pages.append(page_index)
-            insert_failed_page(
-                conn,
-                document_id=document_id,
-                pdf_page_index=page_index,
-                error_message=f"Unexpected error: {exc}",
-                page_markdown=page.markdown,
-            )
-            update_document(
-                conn,
-                document_id,
-                skipped_pages=encode_int_list(skipped_pages),
-                failed_pages=encode_int_list(failed_pages),
-            )
-            conn.commit()
-            continue
+    else:
+        # Multi-worker parallel processing
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_page = {
+                executor.submit(_process_single_page, p, path_str, document_id, llm_client): p
+                for p in pages_to_process
+            }
+            for future in as_completed(future_to_page):
+                page_index, facts, error_msg, was_skipped = future.result()
+                if was_skipped:
+                    if page_index not in skipped_pages:
+                        skipped_pages.append(page_index)
+                elif error_msg:
+                    failed_pages.append(page_index)
+                    insert_failed_page(
+                        conn,
+                        document_id=document_id,
+                        pdf_page_index=page_index,
+                        error_message=error_msg,
+                        page_markdown=future_to_page[future].markdown or "",
+                    )
+                else:
+                    for fact in facts:
+                        insert_fact(conn, fact)
+                    conn.execute(
+                        "DELETE FROM failed_page_contents WHERE document_id = ? AND pdf_page_index = ?",
+                        (document_id, page_index),
+                    )
 
-        # Persist facts and update progress atomically
-        for fact in facts:
-            insert_fact(conn, fact)
-
-        update_document(
-            conn,
-            document_id,
-            skipped_pages=encode_int_list(skipped_pages),
-            failed_pages=encode_int_list(failed_pages),
-        )
-        conn.commit()
-        log.info("Page %d: inserted %d fact(s).", page_index, len(facts))
+                update_document(
+                    conn,
+                    document_id,
+                    skipped_pages=encode_int_list(skipped_pages),
+                    failed_pages=encode_int_list(failed_pages),
+                )
+                conn.commit()
 
     # ------------------------------------------------------------------
     # 6. Finalise document status
@@ -247,3 +301,5 @@ def process_pdf(
     log.info(
         "Document %s done. skipped=%s failed=%s", document_id, skipped_pages, failed_pages
     )
+
+

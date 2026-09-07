@@ -227,13 +227,15 @@ class LLMClient:
         patched = list(messages)
         for i in range(len(patched) - 1, -1, -1):
             if patched[i]["role"] == "user":
-                if "/no_think" not in patched[i]["content"]:
+                c = patched[i]["content"]
+                if isinstance(c, str) and "/no_think" not in c:
                     patched[i] = {
                         **patched[i],
-                        "content": patched[i]["content"] + "\n/no_think",
+                        "content": c + "\n/no_think",
                     }
                 break
         return patched
+
 
 
 def get_extractor_client() -> LLMClient:

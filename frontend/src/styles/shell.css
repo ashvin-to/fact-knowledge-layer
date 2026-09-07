@@ -1,0 +1,482 @@
+/* ==========================================================================
+   App shell — sidebar, topbar, content area
+   ========================================================================== */
+
+.app-shell {
+  display: flex;
+  height: 100svh;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar
+   -------------------------------------------------------------------------- */
+.sidebar {
+  flex: 0 0 var(--sidebar-w);
+  width: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  position: relative;
+  z-index: 30;
+  transition: width var(--dur) var(--ease);
+}
+
+.side-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: var(--topbar-h);
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.side-logo {
+  flex: 0 0 auto;
+}
+
+.side-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+}
+
+.side-brand-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-hi);
+  white-space: nowrap;
+}
+
+.side-brand-sub {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.side-section-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 14px 10px 6px;
+}
+
+.side-section-label:first-child {
+  padding-top: 2px;
+}
+
+.side-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  color: var(--text-lo);
+  font-size: 13px;
+  font-weight: 550;
+  text-align: left;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+  position: relative;
+}
+
+.side-item:hover {
+  background: var(--panel-2);
+  color: var(--text-hi);
+}
+
+.side-item.active {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent);
+}
+
+.side-item.active::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.side-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.side-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-count {
+  font-size: 10.5px;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-full);
+  background: var(--panel-3);
+  color: var(--text-lo);
+}
+
+.side-item.active .side-count {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+}
+
+.side-foot {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.side-stat-line {
+  font-size: 11px;
+  color: var(--text-faint);
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.side-stat-line b {
+  color: var(--text-lo);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.side-shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--inset);
+  color: var(--text-lo);
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.side-shortcut:hover {
+  border-color: var(--line-strong);
+  color: var(--text-hi);
+}
+
+/* --------------------------------------------------------------------------
+   Main column: topbar + content
+   -------------------------------------------------------------------------- */
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.topbar {
+  flex: 0 0 var(--topbar-h);
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 22px;
+  background: var(--navbar-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  z-index: 20;
+}
+
+.topbar-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.topbar-context .crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.topbar-context .crumbs b {
+  font-weight: 650;
+  color: var(--text-hi);
+  font-size: 13px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-search-btn {
+  height: 32px;
+  gap: 8px;
+}
+
+.top-search-btn .label {
+  color: var(--text-lo);
+}
+
+.api-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.api-chip .pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.api-chip.online {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+}
+.api-chip.online .pulse {
+  background: var(--ok);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent);
+  animation: ping 2.4s var(--ease) infinite;
+}
+
+.api-chip.offline {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 30%, transparent);
+}
+.api-chip.offline .pulse {
+  background: var(--bad);
+}
+
+@keyframes ping {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.theme-toggle {
+  color: var(--text-lo);
+}
+
+.app-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--content-pad-y) var(--content-pad-x);
+  scroll-behavior: smooth;
+}
+
+/* Fill the content viewport (used by views with internal scroll areas) */
+.fill-view {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Entry animation for each top-level view */
+.view-enter {
+  animation: view-in var(--dur) var(--ease);
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Shared view header pattern
+   -------------------------------------------------------------------------- */
+.view-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.view-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 21px;
+  font-weight: 720;
+  letter-spacing: -0.017em;
+  color: var(--text-hi);
+  line-height: 1.2;
+}
+
+.view-desc {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--text-lo);
+  max-width: 640px;
+}
+
+.view-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Page-level back link */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 4px;
+  margin-bottom: 14px;
+  border-radius: var(--r-xs);
+  color: var(--text-lo);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition:
+    color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.back-link:hover {
+  color: var(--text-hi);
+  background: var(--panel-2);
+}
+
+/* --------------------------------------------------------------------------
+   Responsive: collapse sidebar to icon rail
+   -------------------------------------------------------------------------- */
+@media (max-width: 1120px) {
+  .sidebar {
+    flex-basis: var(--sidebar-w-collapsed);
+    width: var(--sidebar-w-collapsed);
+  }
+
+  .side-brand {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .side-brand-text,
+  .side-section-label,
+  .side-item-label,
+  .side-count,
+  .side-stat-line,
+  .side-shortcut .txt {
+    display: none;
+  }
+
+  .side-scroll {
+    padding: 12px 10px;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .side-section-label:not(:first-child) {
+    display: block;
+    width: 100%;
+    text-align: center;
+    height: 1px;
+    padding: 0;
+    margin: 6px 0;
+    background: var(--line);
+    font-size: 0;
+  }
+
+  .side-section-label:first-child {
+    display: none;
+  }
+
+  .side-item {
+    justify-content: center;
+    width: 42px;
+    padding: 0;
+    height: 40px;
+  }
+
+  .side-item.active::before {
+    left: -10px;
+  }
+
+  .side-foot {
+    align-items: center;
+    padding: 12px 8px;
+  }
+
+  .side-shortcut {
+    justify-content: center;
+    width: 40px;
+    padding: 0;
+  }
+
+  .top-search-btn .label {
+    display: none;
+  }
+}

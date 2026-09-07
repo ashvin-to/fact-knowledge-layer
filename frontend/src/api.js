@@ -1,5 +1,18 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
+export function getApiBase() {
+  return API_BASE;
+}
+
+export async function checkApiHealth() {
+  try {
+    const res = await fetch(`${API_BASE}/health`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchDocuments() {
   const res = await fetch(`${API_BASE}/documents`);
   if (!res.ok) throw new Error(`Failed to fetch documents: ${res.statusText}`);
@@ -32,7 +45,7 @@ export async function uploadDocument(file) {
   return res.json();
 }
 
-export async function fetchPageImage(docId, pageIndex) {
+export function fetchPageImage(docId, pageIndex) {
   return `${API_BASE}/documents/${docId}/pages/${pageIndex}/image`;
 }
 
@@ -55,10 +68,42 @@ export async function runCompare(docIds = null) {
 }
 
 export async function fetchRelationships(type = null) {
-  const url = type && type !== "all" 
+  const url = type && type !== "all"
     ? `${API_BASE}/relationships?type=${encodeURIComponent(type)}`
     : `${API_BASE}/relationships`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch relationships: ${res.statusText}`);
   return res.json();
 }
+
+export async function fetchGraph(docId = null, relationshipType = null) {
+  const params = new URLSearchParams();
+  if (docId) params.append("document_id", docId);
+  if (relationshipType && relationshipType !== "all") params.append("relationship_type", relationshipType);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const res = await fetch(`${API_BASE}/graph${qs}`);
+  if (!res.ok) throw new Error(`Failed to fetch graph data: ${res.statusText}`);
+  return res.json();
+}
+
+export async function adjudicateRelationship(relationshipId, data) {
+  const res = await fetch(`${API_BASE}/relationships/${relationshipId}/adjudicate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Adjudication failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchTrajectories(refresh = false) {
+  const url = refresh ? `${API_BASE}/synthesis/trajectories?refresh=true` : `${API_BASE}/synthesis/trajectories`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch trajectories: ${res.statusText}`);
+  return res.json();
+}
+
+

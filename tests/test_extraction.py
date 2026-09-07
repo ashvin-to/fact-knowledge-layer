@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.extraction import FactExtractionPageError, _parse_response, extract_facts_from_page
+from src.extraction import FactExtractionPageError, _parse_response, extract_facts_from_page, extract_facts_from_page_image
 
 
 class TestParseResponse:
@@ -133,3 +133,31 @@ class TestExtractFactsFromPage:
         client.chat.return_value = self._valid_payload()
         facts = extract_facts_from_page("text", 0, "doc-1", client)
         assert facts[0]["extraction_method"] == "local:llama3.1:8b"
+
+
+class TestExtractFactsFromPageImage:
+    def test_vision_extraction_success(self) -> None:
+        payload = json.dumps([
+            {
+                "subject": "Chart Revenue",
+                "predicate": "q1_value",
+                "value": "450",
+                "value_type": "numeric",
+                "unit": "USD M",
+                "time_scope": "Q1 2024",
+                "qualifier": "chart bar",
+                "confidence": 0.95,
+                "evidence_text": "Q1 2024 bar: 450 USD M",
+            }
+        ])
+        client = MagicMock()
+        client.model = "qwen2.5-vl:7b"
+        client.chat.return_value = payload
+
+        dummy_img = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        facts = extract_facts_from_page_image(dummy_img, 2, "doc-img-1", client)
+        assert len(facts) == 1
+        assert facts[0]["subject"] == "Chart Revenue"
+        assert facts[0]["pdf_page_index"] == 2
+        assert facts[0]["extraction_method"] == "vision:qwen2.5-vl:7b"
+

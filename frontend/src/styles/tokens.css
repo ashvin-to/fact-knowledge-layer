@@ -1,0 +1,175 @@
+/* ==========================================================================
+   Design tokens — dark & light themes
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Shared (theme-agnostic) tokens
+   -------------------------------------------------------------------------- */
+:root {
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo,
+    Consolas, monospace;
+
+  /* Radii */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-full: 999px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 260ms;
+
+  /* Layout metrics (referenced by the shell) */
+  --sidebar-w: 252px;
+  --sidebar-w-collapsed: 68px;
+  --topbar-h: 58px;
+  --content-pad-x: 28px;
+  --content-pad-y: 24px;
+
+  /* Brand gradient (monogram) */
+  --brand-grad: linear-gradient(135deg, #6a5cff 0%, #38bdf8 100%);
+  --brand-grad-soft: linear-gradient(
+    135deg,
+    rgba(106, 92, 255, 0.16),
+    rgba(56, 189, 248, 0.14)
+  );
+
+  /* Stage used by the graph canvas — deliberately dark in both themes */
+  --stage: #070b14;
+  --stage-grad: radial-gradient(
+      1100px 560px at 30% -10%,
+      rgba(99, 102, 241, 0.1),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 520px at 110% 10%,
+      rgba(14, 165, 233, 0.08),
+      transparent 60%
+    ),
+    var(--stage);
+}
+
+/* --------------------------------------------------------------------------
+   Dark theme (default)
+   -------------------------------------------------------------------------- */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0a0e17;
+  --panel: #10151f;
+  --panel-2: #151c29;
+  --panel-3: #1c2534;
+  --inset: #0c111b;
+  --inset-2: #0e1420;
+
+  --text-hi: #eef2f9;
+  --text: #b9c3d4;
+  --text-lo: #8391a8;
+  --text-faint: #5a6679;
+
+  --line: rgba(148, 163, 184, 0.15);
+  --line-strong: rgba(148, 163, 184, 0.27);
+  --line-soft: rgba(148, 163, 184, 0.09);
+
+  /* Accent — indigo */
+  --accent: #8b93ff;
+  --accent-solid: #6366f1;
+  --accent-solid-hover: #777cf8;
+  --accent-contrast: #ffffff;
+  --ring: rgba(129, 140, 248, 0.5);
+
+  /* Status */
+  --ok: #34d399;
+  --ok-strong: #059669;
+  --warn: #fbbf24;
+  --warn-strong: #d97706;
+  --bad: #f87171;
+  --bad-strong: #e11d48;
+  --info: #38bdf8;
+  --info-strong: #0284c7;
+
+  /* Evidence highlight */
+  --ev-bg: rgba(250, 204, 21, 0.16);
+  --ev-line: #facc15;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+  --shadow-3: 0 24px 60px -20px rgba(0, 0, 0, 0.6);
+  --glow-accent: 0 0 0 1px rgba(129, 140, 248, 0.35),
+    0 8px 30px -8px rgba(99, 102, 241, 0.45);
+
+  --navbar-bg: rgba(10, 14, 23, 0.78);
+  --scrim: rgba(3, 6, 12, 0.72);
+
+  /* Doc cluster palette (graph) — tuned for the dark stage */
+  --c1: #a78bfa;
+  --c2: #22d3ee;
+  --c3: #34d399;
+  --c4: #fbbf24;
+  --c5: #f472b6;
+}
+
+/* --------------------------------------------------------------------------
+   Light theme
+   -------------------------------------------------------------------------- */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f2f4f9;
+  --panel: #ffffff;
+  --panel-2: #f4f6fb;
+  --panel-3: #e9edf5;
+  --inset: #f7f8fc;
+  --inset-2: #eef1f8;
+
+  --text-hi: #101828;
+  --text: #3f4a63;
+  --text-lo: #67748c;
+  --text-faint: #9aa5b8;
+
+  --line: rgba(15, 23, 42, 0.11);
+  --line-strong: rgba(15, 23, 42, 0.2);
+  --line-soft: rgba(15, 23, 42, 0.06);
+
+  --accent: #4f46e5;
+  --accent-solid: #4f46e5;
+  --accent-solid-hover: #4338ca;
+  --accent-contrast: #ffffff;
+  --ring: rgba(79, 70, 229, 0.35);
+
+  --ok: #059669;
+  --ok-strong: #047857;
+  --warn: #b45309;
+  --warn-strong: #92400e;
+  --bad: #dc2626;
+  --bad-strong: #b91c1c;
+  --info: #0369a1;
+  --info-strong: #075985;
+
+  --ev-bg: rgba(234, 179, 8, 0.18);
+  --ev-line: #ca8a04;
+
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-2: 0 10px 28px -14px rgba(15, 23, 42, 0.16);
+  --shadow-3: 0 30px 70px -24px rgba(15, 23, 42, 0.28);
+  --glow-accent: 0 0 0 1px rgba(79, 70, 229, 0.22),
+    0 8px 26px -10px rgba(79, 70, 229, 0.35);
+
+  --navbar-bg: rgba(255, 255, 255, 0.82);
+  --scrim: rgba(15, 23, 42, 0.45);
+
+  --c1: #7c3aed;
+  --c2: #0e7490;
+  --c3: #047857;
+  --c4: #b45309;
+  --c5: #be185d;
+}

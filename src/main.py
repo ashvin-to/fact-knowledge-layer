@@ -58,10 +58,12 @@ from .db import (
     init_db,
     insert_document,
     update_document,
+    adjudicate_relationship,
 )
 from .ingestion import process_pdf
 from .llm_client import LLMClient, get_extractor_client, get_reasoner_client
 from .models import (
+    AdjudicateRequest,
     BBoxItem,
     CompareRequest,
     CompareResponse,
@@ -74,7 +76,10 @@ from .models import (
     FactRelationshipItem,
     FactsResponse,
     RelationshipsResponse,
+    SynthesisResponse,
 )
+from .synthesis import run_multi_hop_synthesis
+
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -117,6 +122,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health", summary="Health check endpoint")
+async def health_check():
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "database": str(_DB_PATH),
+    }
+
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +346,102 @@ async def get_page_image_route(document_id: str, page_index: int):
     return Response(content=png_bytes, media_type="image/png")
 
 
+def _find_evidence_bboxes(page: pymupdf.Page, text: str) -> tuple[list[pymupdf.Rect], str, str]:
+    """Robustly locate evidence text bounding boxes on a page using multi-strategy search.
+    
+    Strategies:
+      1. Exact full-string match (cleaned of markdown and outer quotes)
+      2. Direct prefix search for long inputs
+      3. Word token sequence proximity search (handles multi-line wraps & formatting drift)
+      4. Sliding phrase chunks
+      5. Distinctive numeric / keyword anchor search
+    """
+    if not text or not text.strip():
+        return [], "", "none"
+
+    # 1. Clean markdown formatting
+    cleaned = _normalize_for_search(text)
+    if not cleaned:
+        return [], "", "none"
+
+    hits = page.search_for(cleaned)
+    if hits:
+        return hits, cleaned, "exact"
+
+    stripped = cleaned.strip(" \t\n\r\"'“”«»`~:;.,()[]{}")
+    if stripped and stripped != cleaned:
+        hits = page.search_for(stripped)
+        if hits:
+            return hits, stripped, "exact"
+
+    # 2. Fallback prefix search for long inputs
+    if len(cleaned) > 10:
+        prefix = cleaned[:40].strip()
+        hits = page.search_for(prefix)
+        if hits:
+            return hits, prefix, "fallback_prefix"
+
+    # 3. Token-level consecutive sequence matching (multi-line aware)
+    page_words = page.get_text("words")  # (x0, y0, x1, y1, word, block, line, word_no)
+    if page_words:
+        target_tokens = [re.sub(r"[^\w]", "", w.lower()) for w in text.split() if re.sub(r"[^\w]", "", w.lower())]
+        page_tokens = [re.sub(r"[^\w]", "", w[4].lower()) for w in page_words]
+        n_target = len(target_tokens)
+
+        if n_target >= 2 and len(page_tokens) > 0:
+            best_match: list[tuple] = []
+            best_score = 0
+
+            for i in range(len(page_tokens)):
+                match_curr: list[tuple] = []
+                t_idx = 0
+                p_idx = i
+                while p_idx < len(page_tokens) and t_idx < n_target:
+                    if page_tokens[p_idx] == target_tokens[t_idx]:
+                        match_curr.append(page_words[p_idx])
+                        t_idx += 1
+                        p_idx += 1
+                    elif page_tokens[p_idx] in target_tokens[t_idx : t_idx + 3]:
+                        idx_in_sub = target_tokens[t_idx : t_idx + 3].index(page_tokens[p_idx])
+                        match_curr.append(page_words[p_idx])
+                        t_idx += idx_in_sub + 1
+                        p_idx += 1
+                    else:
+                        p_idx += 1
+                        if p_idx - i > n_target + 5:
+                            break
+
+                if len(match_curr) > best_score:
+                    best_score = len(match_curr)
+                    best_match = match_curr
+
+            if best_score >= min(3, n_target):
+                line_groups: dict[tuple[int, int], list[tuple]] = {}
+                for w in best_match:
+                    key = (w[5], w[6])
+                    line_groups.setdefault(key, []).append(w)
+                rects = [
+                    pymupdf.Rect(
+                        min(w[0] for w in words_in_line),
+                        min(w[1] for w in words_in_line),
+                        max(w[2] for w in words_in_line),
+                        max(w[3] for w in words_in_line),
+                    )
+                    for words_in_line in line_groups.values()
+                ]
+                return rects, cleaned, "token_sequence"
+
+    # 4. Distinctive numeric anchor fallback (e.g. 21,342, 81417)
+    numbers = re.findall(r"\b\d+(?:[.,]\d+)*\b", cleaned)
+    for num in numbers:
+        if len(num) >= 3 or (len(num) >= 2 and "." in num):
+            hits = page.search_for(num)
+            if hits:
+                return hits, num, "numeric_anchor"
+
+    return [], cleaned, "none"
+
+
 @app.get(
     "/documents/{document_id}/pages/{page_index}/evidence-bbox",
     response_model=EvidenceBBoxResponse,
@@ -366,20 +477,7 @@ async def get_evidence_bbox_route(
         page_w = float(rect.width)
         page_h = float(rect.height)
 
-        normalized = _normalize_for_search(text)
-        match_type = "exact"
-        hits = page.search_for(normalized) if normalized else []
-
-        # Fallback: search first ~40 characters if exact normalized search has no hits
-        if not hits and len(normalized) > 10:
-            prefix = normalized[:40].strip()
-            hits = page.search_for(prefix)
-            if hits:
-                match_type = "fallback_prefix"
-            else:
-                match_type = "none"
-        elif not hits:
-            match_type = "none"
+        hits, normalized, match_type = _find_evidence_bboxes(page, text)
 
         bboxes = [
             BBoxItem(
@@ -400,10 +498,12 @@ async def get_evidence_bbox_route(
 
     return EvidenceBBoxResponse(
         bboxes=bboxes,
+        rects=bboxes,
         page_width=page_w,
         page_height=page_h,
         normalized_query=normalized,
         match_type=match_type,
+        match_method=match_type,
     )
 
 
@@ -466,6 +566,174 @@ async def get_fact_relationships_route(fact_id: str):
     return RelationshipsResponse(
         relationships=[FactRelationshipItem.model_validate(r) for r in rows]
     )
+
+
+@app.post(
+    "/relationships/{relationship_id}/adjudicate",
+    summary="Human-in-the-loop audit adjudication and relationship override",
+)
+async def adjudicate_relationship_route(
+    relationship_id: str,
+    request: AdjudicateRequest,
+):
+    conn = get_connection(_DB_PATH)
+    try:
+        rel = conn.execute(
+            "SELECT * FROM fact_relationships WHERE id = ?", (relationship_id,)
+        ).fetchone()
+        if not rel:
+            raise HTTPException(status_code=404, detail="Relationship not found.")
+
+        rel_type_str = request.relationship_type.value if hasattr(request.relationship_type, "value") else str(request.relationship_type)
+        adjudicate_relationship(
+            conn=conn,
+            relationship_id=relationship_id,
+            relationship_type=rel_type_str,
+            user_adjudication_status=request.status,
+            user_notes=request.notes,
+            reconciliation_factor=request.reconciliation_factor,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "status": "ok",
+        "relationship_id": relationship_id,
+        "relationship_type": request.relationship_type,
+        "user_adjudication_status": request.status,
+    }
+
+
+@app.get(
+    "/synthesis/trajectories",
+    response_model=SynthesisResponse,
+    summary="Discover and synthesize multi-hop fact trajectories across documents",
+)
+async def get_synthesis_trajectories_route(
+    min_docs: int = Query(2, description="Minimum number of distinct documents required for a trajectory"),
+    refresh: bool = Query(False, description="Force re-synthesis instead of reading cached narratives"),
+):
+    conn = get_connection(_DB_PATH)
+    try:
+        reasoner = get_reasoner_client()
+        trajectories = run_multi_hop_synthesis(
+            conn, min_docs=min_docs, reasoner_client=reasoner, force_refresh=refresh
+        )
+    finally:
+        conn.close()
+
+
+    return SynthesisResponse(
+        total_trajectories=len(trajectories),
+        trajectories=trajectories,
+    )
+
+
+@app.get(
+    "/graph",
+    summary="Get complete knowledge graph data (nodes and links) for visualization",
+)
+async def get_knowledge_graph_route(
+    document_id: Optional[str] = Query(None, description="Optional filter by document ID"),
+    relationship_type: Optional[str] = Query(None, description="Optional filter by relationship type"),
+):
+    conn = get_connection(_DB_PATH)
+    try:
+        # 1. Fetch documents
+        doc_rows = conn.execute("SELECT id, filename, status, page_count, pdf_type FROM documents").fetchall()
+        docs_map = {r["id"]: dict(r) for r in doc_rows}
+
+        # 2. Fetch facts
+        if document_id:
+            fact_rows = conn.execute(
+                "SELECT * FROM facts WHERE document_id = ?", (document_id,)
+            ).fetchall()
+        else:
+            fact_rows = conn.execute("SELECT * FROM facts").fetchall()
+
+        facts_list = [dict(r) for r in fact_rows]
+        fact_id_set = {f["id"] for f in facts_list}
+
+        # 3. Fetch relationships
+        rel_rows = get_relationships_inlined(conn, relationship_type=relationship_type)
+
+        nodes = []
+        links = []
+
+        # Add document nodes
+        for d_id, d_data in docs_map.items():
+            if document_id and d_id != document_id:
+                continue
+            nodes.append({
+                "id": f"doc-{d_id}",
+                "node_type": "document",
+                "label": d_data["filename"],
+                "document_id": d_id,
+                "filename": d_data["filename"],
+                "page_count": d_data["page_count"],
+                "status": d_data["status"],
+            })
+
+        # Add fact nodes
+        for f in facts_list:
+            nodes.append({
+                "id": f"fact-{f['id']}",
+                "node_type": "fact",
+                "label": f"{f['subject']}: {f['predicate']}",
+                "fact_id": f["id"],
+                "document_id": f["document_id"],
+                "filename": docs_map.get(f["document_id"], {}).get("filename", "Unknown"),
+                "subject": f["subject"],
+                "predicate": f["predicate"],
+                "value": f["value"],
+                "unit": f["unit"],
+                "time_scope": f["time_scope"],
+                "confidence": f["confidence"],
+                "pdf_page_index": f["pdf_page_index"],
+                "evidence_text": f["evidence_text"],
+            })
+            # Link document -> fact
+            links.append({
+                "source": f"doc-{f['document_id']}",
+                "target": f"fact-{f['id']}",
+                "link_type": "contains",
+                "label": "contains",
+            })
+
+        # Add cross-fact relationship links
+        for r in rel_rows:
+            f_a = r.get("fact_id_a") or (r.get("fact_a") or {}).get("id")
+            f_b = r.get("fact_id_b") or (r.get("fact_b") or {}).get("id")
+            if f_a in fact_id_set and f_b in fact_id_set:
+                links.append({
+                    "id": r.get("id"),
+                    "source": f"fact-{f_a}",
+                    "target": f"fact-{f_b}",
+                    "link_type": r.get("relationship_type", "unrelated"),
+                    "label": r.get("relationship_type"),
+                    "explanation": r.get("explanation"),
+                    "reconciliation_factor": r.get("reconciliation_factor"),
+                    "confidence": r.get("confidence"),
+                    "similarity_score": r.get("similarity_score"),
+                    "needs_review": bool(r.get("needs_review")),
+                    "user_adjudication_status": r.get("user_adjudication_status"),
+                    "user_notes": r.get("user_notes"),
+                })
+
+        return {
+            "nodes": nodes,
+            "links": links,
+            "summary": {
+                "total_nodes": len(nodes),
+                "total_links": len(links),
+                "document_count": len(docs_map),
+                "fact_count": len(facts_list),
+                "relationship_count": len(rel_rows),
+            }
+        }
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
