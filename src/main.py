@@ -34,14 +34,17 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import pymupdf
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .comparison import run_comparison_pipeline
@@ -59,10 +62,14 @@ from .db import (
 from .ingestion import process_pdf
 from .llm_client import LLMClient, get_extractor_client, get_reasoner_client
 from .models import (
+    BBoxItem,
     CompareRequest,
     CompareResponse,
     Document,
+    DocumentListItem,
+    DocumentListResponse,
     DocumentUploadResponse,
+    EvidenceBBoxResponse,
     Fact,
     FactRelationshipItem,
     FactsResponse,
@@ -98,8 +105,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fact Extraction & Comparison Service",
     description="Ingest PDFs, extract facts, ground evidence, and perform cross-document comparison.",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
+)
+
+# Enable CORS for frontend development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -111,6 +127,13 @@ def _is_pdf(file: UploadFile, header: bytes) -> bool:
     """Check content-type header AND magic bytes."""
     ct = (file.content_type or "").lower()
     return ct == "application/pdf" and header.startswith(_PDF_MAGIC)
+
+
+def _normalize_for_search(text: str) -> str:
+    """Normalize markdown and whitespace for PDF text layer search."""
+    cleaned = re.sub(r"[\*_#\|\x60]+", " ", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +234,28 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 @app.get(
+    "/documents",
+    response_model=DocumentListResponse,
+    summary="List all uploaded documents",
+)
+async def list_documents_route():
+    conn = get_connection(_DB_PATH)
+    try:
+        rows = conn.execute("SELECT * FROM documents ORDER BY upload_time DESC").fetchall()
+        docs = []
+        for r in rows:
+            d = dict(r)
+            d["fact_count"] = count_facts(conn, d["id"])
+            d["skipped_pages"] = decode_int_list(d["skipped_pages"])
+            d["failed_pages"] = decode_int_list(d["failed_pages"])
+            docs.append(DocumentListItem.model_validate(d))
+    finally:
+        conn.close()
+
+    return DocumentListResponse(documents=docs)
+
+
+@app.get(
     "/documents/{document_id}",
     response_model=Document,
     summary="Get document metadata",
@@ -246,6 +291,119 @@ async def get_facts_route(document_id: str):
     return FactsResponse(
         document_id=document_id,
         facts=[Fact.model_validate(r) for r in rows],
+    )
+
+
+@app.get(
+    "/documents/{document_id}/pages/{page_index}/image",
+    summary="Render and return a PDF page as PNG image",
+)
+async def get_page_image_route(document_id: str, page_index: int):
+    conn = get_connection(_DB_PATH)
+    try:
+        doc_row = get_document(conn, document_id)
+    finally:
+        conn.close()
+
+    if not doc_row:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    pdf_path = Path(doc_row["storage_path"])
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF storage file not found on server.")
+
+    try:
+        pdf_doc = pymupdf.open(str(pdf_path))
+        if page_index < 0 or page_index >= len(pdf_doc):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Page index {page_index} out of range (total pages: {len(pdf_doc)}).",
+            )
+        page = pdf_doc[page_index]
+        pix = page.get_pixmap(dpi=150)
+        png_bytes = pix.tobytes("png")
+        pdf_doc.close()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to render page image: {exc}")
+
+    return Response(content=png_bytes, media_type="image/png")
+
+
+@app.get(
+    "/documents/{document_id}/pages/{page_index}/evidence-bbox",
+    response_model=EvidenceBBoxResponse,
+    summary="Locate evidence text bounding boxes on a rendered page",
+)
+async def get_evidence_bbox_route(
+    document_id: str,
+    page_index: int,
+    text: str = Query(..., description="Evidence text substring to locate on page"),
+):
+    conn = get_connection(_DB_PATH)
+    try:
+        doc_row = get_document(conn, document_id)
+    finally:
+        conn.close()
+
+    if not doc_row:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    pdf_path = Path(doc_row["storage_path"])
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF storage file not found on server.")
+
+    try:
+        pdf_doc = pymupdf.open(str(pdf_path))
+        if page_index < 0 or page_index >= len(pdf_doc):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Page index {page_index} out of range (total pages: {len(pdf_doc)}).",
+            )
+        page = pdf_doc[page_index]
+        rect = page.rect
+        page_w = float(rect.width)
+        page_h = float(rect.height)
+
+        normalized = _normalize_for_search(text)
+        match_type = "exact"
+        hits = page.search_for(normalized) if normalized else []
+
+        # Fallback: search first ~40 characters if exact normalized search has no hits
+        if not hits and len(normalized) > 10:
+            prefix = normalized[:40].strip()
+            hits = page.search_for(prefix)
+            if hits:
+                match_type = "fallback_prefix"
+            else:
+                match_type = "none"
+        elif not hits:
+            match_type = "none"
+
+        bboxes = [
+            BBoxItem(
+                x0=float(h.x0),
+                y0=float(h.y0),
+                x1=float(h.x1),
+                y1=float(h.y1),
+                page_width=page_w,
+                page_height=page_h,
+            )
+            for h in hits
+        ]
+        pdf_doc.close()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to calculate evidence bbox: {exc}")
+
+    return EvidenceBBoxResponse(
+        bboxes=bboxes,
+        page_width=page_w,
+        page_height=page_h,
+        normalized_query=normalized,
+        match_type=match_type,
     )
 
 

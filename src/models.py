@@ -192,3 +192,46 @@ class RelationshipsResponse(BaseModel):
     """Response body for GET /relationships."""
 
     relationships: list[FactRelationshipItem]
+
+
+class BBoxItem(BaseModel):
+    """Bounding box coordinates for highlighted evidence on a PDF page."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    page_width: float
+    page_height: float
+
+
+class EvidenceBBoxResponse(BaseModel):
+    """Response body for GET /documents/{id}/pages/{page}/evidence-bbox."""
+
+    bboxes: list[BBoxItem]
+    page_width: float
+    page_height: float
+    normalized_query: str
+    match_type: Literal["exact", "fallback_prefix", "none"]
+
+
+class DocumentListItem(BaseModel):
+    """Document summary item with fact count."""
+
+    id: str
+    filename: str
+    upload_time: str
+    page_count: Optional[int] = None
+    pdf_type: Optional[str] = None
+    status: str
+    fact_count: int = 0
+    skipped_pages: list[int] = []
+    failed_pages: list[int] = []
+    error_message: Optional[str] = None
+
+
+class DocumentListResponse(BaseModel):
+    """Response body for GET /documents."""
+
+    documents: list[DocumentListItem]
+
