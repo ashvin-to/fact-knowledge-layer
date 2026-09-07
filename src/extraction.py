@@ -197,8 +197,16 @@ def _parse_response(raw: str) -> tuple[list[FactExtraction], str | None]:
     seen_keys: set[tuple[str, str, str, str | None]] = set()
 
     for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            continue
+        clean_item = dict(item)
+        if "value" in clean_item and clean_item["value"] is None:
+            clean_item["value"] = "-"
+        elif "value" in clean_item:
+            clean_item["value"] = str(clean_item["value"]).strip()
+
         try:
-            fact_obj = FactExtraction.model_validate(item)
+            fact_obj = FactExtraction.model_validate(clean_item)
             dedup_key = (
                 fact_obj.subject.strip().lower(),
                 fact_obj.predicate.strip().lower(),

@@ -138,21 +138,27 @@ def process_pdf(
     skipped_pages: list[int] = []
     failed_pages: list[int] = []
 
-    # Resume support: retrieve already processed pages with facts
-    already_extracted_pages = {
-        row[0]
-        for row in conn.execute(
-            "SELECT DISTINCT pdf_page_index FROM facts WHERE document_id = ?",
-            (document_id,),
-        ).fetchall()
-    }
+    # Resume support: skip directly to the next unprocessed page after last saved fact
+    max_page_row = conn.execute(
+        "SELECT MAX(pdf_page_index) FROM facts WHERE document_id = ?",
+        (document_id,),
+    ).fetchone()
+    last_processed_page = (
+        max_page_row[0] if (max_page_row and max_page_row[0] is not None) else -1
+    )
+    if last_processed_page >= 0:
+        log.info(
+            "Document %s has facts up to page %d — resuming from page %d.",
+            document_id,
+            last_processed_page,
+            last_processed_page + 1,
+        )
 
     for page in pages:
         page_index: int = page.page  # 0-indexed
 
-        # If page facts were already extracted in a previous/interrupted run, skip
-        if page_index in already_extracted_pages:
-            log.info("Page %d already processed with facts — skipping.", page_index)
+        # Fast forward directly past already-processed pages
+        if page_index <= last_processed_page:
             continue
 
         # Skip OCR-needed pages (unreliable / image-only text)
