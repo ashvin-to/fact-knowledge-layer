@@ -4,7 +4,7 @@ A production-grade **Fact Knowledge Layer** that extracts structured atomic fact
 
 ---
 
-## 🌟 Key Capabilities
+## Key Capabilities
 
 1. **Domain-Agnostic Fact Extraction**:
    - Parses arbitrary PDFs (financial disclosures, IPO prospectuses, macroeconomic surveys, corporate reports) page-by-page.
@@ -20,10 +20,10 @@ A production-grade **Fact Knowledge Layer** that extracts structured atomic fact
 3. **Cross-Document Semantic Comparison Engine**:
    - High-performance candidate pair generation using local `all-MiniLM-L6-v2` cosine similarity embeddings.
    - Two-stage LLM reasoning cascade classifying relationships into:
-     - 🟢 **`corroborate`**: Claims agree under identical temporal and measurement scope.
-     - 🔴 **`contradict`**: Conflicting numbers or statements under identical scope without explanatory context.
-     - 🟡 **`context_reconciled`**: Divergent figures explained by temporal drift (e.g. FY22 vs FY24), accounting scope (Standalone vs Consolidated), or unit restatements (`reconciliation_factor`).
-     - ⚪ **`unrelated`**: Orthogonal metrics or disparate entities.
+     - **`corroborate`**: Claims agree under identical temporal and measurement scope.
+     - **`contradict`**: Conflicting numbers or statements under identical scope without explanatory context.
+     - **`context_reconciled`**: Divergent figures explained by temporal drift (e.g. FY22 vs FY24), accounting scope (Standalone vs Consolidated), or unit restatements (`reconciliation_factor`).
+     - **`unrelated`**: Orthogonal metrics or disparate entities.
    - Second-opinion adjudication: Automatically triggers a secondary verification pass on contradictions and low-confidence evaluations.
 
 4. **Interactive D3 Knowledge Graph**:
@@ -33,7 +33,7 @@ A production-grade **Fact Knowledge Layer** that extracts structured atomic fact
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
                                     ┌────────────────────────┐
@@ -82,7 +82,7 @@ A production-grade **Fact Knowledge Layer** that extracts structured atomic fact
 
 ---
 
-## 🔍 Concrete Case Studies & Examples
+## Concrete Case Studies & Examples
 
 The system was evaluated against real-world complex corporate filings (Delhivery IPO Prospectus 2022 vs FY24 Annual Report vs Q4 2024 Presentation):
 
@@ -151,49 +151,112 @@ The system was evaluated against real-world complex corporate filings (Delhivery
 
 ---
 
-## 🚀 Quick Start
+## Quick Start & How to Run
 
 ### 1. Prerequisites
-- Python 3.11+ with `uv` package manager
+- Python 3.12+ (managed with `uv`)
 - Node.js 18+ and `npm`
-- (Optional) Local OpenAI-compatible LLM server (e.g. `llama.cpp` / `vLLM` running Qwen2.5) or cloud API key (Groq / OpenRouter)
+
+---
+
+### 2. Configure Your LLM Provider (Choose ONE Option)
+
+The system is 100% provider-agnostic. Choose the option that fits your setup:
+
+#### Option A: Cloud API (Recommended for Evaluators — Fastest & Zero Setup)
+1. Get a free API key from [Groq Console](https://console.groq.com/keys) or [OpenRouter](https://openrouter.ai/).
+2. In your `.env` file:
+```env
+EXTRACTOR_LLM_BASE_URL=https://api.groq.com/openai/v1
+EXTRACTOR_LLM_API_KEY=gsk_your_groq_key_here
+EXTRACTOR_LLM_MODEL=llama-3.3-70b-versatile
+
+REASONER_LLM_BASE_URL=https://api.groq.com/openai/v1
+REASONER_LLM_API_KEY=gsk_your_groq_key_here
+REASONER_LLM_MODEL=llama-3.3-70b-versatile
+```
+
+#### Option B: Ollama (Easiest 1-Click Local Setup — No API Keys)
+1. Install [Ollama](https://ollama.com) (`curl -fsSL https://ollama.com/install.sh | sh` on Linux/macOS).
+2. Pull and start a model:
+```bash
+ollama run qwen2.5:3b
+# Or for higher reasoning capacity:
+ollama run qwen2.5:7b
+```
+3. In your `.env` file:
+```env
+EXTRACTOR_LLM_BASE_URL=http://localhost:11434/v1
+EXTRACTOR_LLM_API_KEY=ollama
+EXTRACTOR_LLM_MODEL=qwen2.5:3b
+
+REASONER_LLM_BASE_URL=http://localhost:11434/v1
+REASONER_LLM_API_KEY=ollama
+REASONER_LLM_MODEL=qwen2.5:3b
+```
+
+#### Option C: llama.cpp / vLLM (Local Inference Server)
+1. Start your local OpenAI-compatible server on port 8080:
+```bash
+llama-server -m /path/to/qwen2.5-3b-instruct.gguf --port 8080
+```
+2. In your `.env` file:
+```env
+EXTRACTOR_LLM_BASE_URL=http://localhost:8080/v1
+EXTRACTOR_LLM_API_KEY=none
+EXTRACTOR_LLM_MODEL=local-model
+
+REASONER_LLM_BASE_URL=http://localhost:8080/v1
+REASONER_LLM_API_KEY=none
+REASONER_LLM_MODEL=local-model
+```
+
+#### Option D: Offline Heuristic Mode (Zero LLM Required)
+If no local server or API key is provided, the system **automatically activates its offline structural heuristic engine**. Ingestion, vector grounding, PDF bounding box rendering, and multi-hop trajectory discovery continue to work out-of-the-box without crashing.
+
+---
 
 > [!NOTE]
 > **LLM Runtime & Performance Trade-offs: Local vs. Cloud Models**
-> - **Local Models (e.g., Qwen2.5-3B via `llama.cpp` / Ollama at `127.0.0.1:8080`)**:
+> - **Local Models (Ollama / `llama.cpp` at `127.0.0.1:8080` or `127.0.0.1:11434`)**:
 >   - *Advantages*: 100% data privacy, zero API costs, no external rate limits, and full offline operation.
 >   - *Trade-offs*: Slower inference throughput on local consumer hardware (longer processing times for dense multi-page PDFs and batch cross-document comparisons), with smaller parameter models having narrower context/reasoning capacity.
-> - **Cloud Models (e.g., Groq, OpenRouter, OpenAI)**:
+> - **Cloud Models (Groq, OpenRouter, OpenAI)**:
 >   - *Advantages*: Sub-second token generation speeds (substantially faster), higher extraction accuracy, and stronger multi-hop reasoning over subtle numerical reconciliations.
 >   - *Trade-offs*: Bound by external API rate limits (requests/tokens per minute on free tiers) and requires active internet access.
 > - **Cascade & Offline Resilience**: The system uses a multi-provider fallback cascade. If local models are unavailable or stopped, it cascades to cloud providers; if all LLM endpoints are unreachable, it gracefully activates the deterministic **Offline Structural Synthesizer** so ingestion, visual grounding, and trajectory navigation never crash.
 
+---
 
-### 2. Backend Setup
+### 3. Start Backend & Frontend
 
+#### Backend (FastAPI)
 ```bash
 cd fact-extraction-service
 
 # Copy and configure environment variables
 cp .env.example .env
 
-# Run FastAPI server
+# Run FastAPI server (runs on http://127.0.0.1:8000)
 uv run uvicorn src.main:app --reload --port 8000
 ```
 
-### 3. Frontend Setup
-
+#### Frontend (React 19 + Vite)
 ```bash
 cd frontend
+
+# Install UI dependencies
 npm install
+
+# Start development server
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser.
+Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## 📥 Ingesting PDFs
+## Ingesting PDFs
 
 ### Batch CLI Ingestion
 You can ingest folders of starter PDFs directly using the durable ingestion script:
@@ -213,7 +276,7 @@ uv run python scripts/ingest_all.py data/starter_pdfs
 
 ---
 
-## 🛠️ API Reference
+## API Reference
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -228,7 +291,7 @@ uv run python scripts/ingest_all.py data/starter_pdfs
 
 ---
 
-## 🧪 Testing & Verification
+## Testing & Verification
 
 Run the complete backend test suite (67 unit & integration tests):
 
@@ -245,6 +308,6 @@ npm run build
 
 ---
 
-## 📑 Detailed Engineering Challenges
+## Detailed Engineering Challenges
 
 For an in-depth breakdown of technical hurdles encountered (including small LLM prose extraction omissions, token truncation salvage, and D3 physics rendering optimizations), read [CHALLENGES.md](file:///mnt/Storage/superjoin/fact-extraction-service/CHALLENGES.md).

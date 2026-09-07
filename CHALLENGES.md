@@ -21,8 +21,8 @@ Extractor Output: [] (0 facts extracted)
 2. **Ambiguity in Prose Boundary Detection**: When facts are embedded within long compound sentences, small models struggle to isolate `(subject, predicate, value, unit)` tuples without explicit structural scaffolding.
 
 ### Attempted Approaches
-- ❌ **Hardcoded Regex Fallback**: Extracted numbers and percentages via regex, but lacked semantic context (`predicate`, `temporal_scope`, and `subject` linking were noisy and broken).
-- ❌ **Increasing Model Temperature**: Higher temperature introduced hallucinations where subjects were attributed to the wrong financial metrics.
+- **Hardcoded Regex Fallback**: Extracted numbers and percentages via regex, but lacked semantic context (`predicate`, `temporal_scope`, and `subject` linking were noisy and broken).
+- **Increasing Model Temperature**: Higher temperature introduced hallucinations where subjects were attributed to the wrong financial metrics.
 
 ### Final Solution (`src/extraction.py`)
 1. **Multi-Domain Few-Shot Demonstration in System Prompt**:
@@ -173,7 +173,7 @@ When the AI flags a contradiction or low-confidence comparison (`needs_review=1`
 
 ---
 
-## 📋 The Four Required Cases (Grounding & Reasoning)
+## The Four Required Cases (Grounding & Reasoning)
 
 Below are the four concrete case studies demonstrating how the system grounds, compares, and explains facts across diverse documents:
 
@@ -222,7 +222,7 @@ Below are the four concrete case studies demonstrating how the system grounds, c
 
 ---
 
-## 🏆 Brownie Points & Architectural Extensions
+## Brownie Points & Architectural Extensions
 
 - **Large PDFs Scalability**: Document ingestion uses chunked per-page commits and parallel thread pools. Pages are streamed and rendered on-demand, preventing GPU memory exhaustion on 100+ page documents.
 - **Incremental Knowledge Layer**: Uploading a new PDF processes only that document and compares newly extracted facts against existing vector embeddings using cosine similarity thresholds (`MATCH_SIMILARITY_THRESHOLD=0.60`), avoiding $O(N^2)$ re-evaluation of historical documents.
