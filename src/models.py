@@ -43,6 +43,47 @@ class FactExtraction(BaseModel):
     confidence: float
     evidence_text: str
 
+    @field_validator("time_scope", "unit", "qualifier", "value", "subject", "predicate", "evidence_text", mode="before")
+    @classmethod
+    def _coerce_str_fields(cls, v: object) -> object:
+        if isinstance(v, (list, tuple)):
+            return ", ".join(str(item) for item in v if item is not None)
+        if isinstance(v, dict):
+            return json.dumps(v)
+        if v is not None and not isinstance(v, str):
+            return str(v)
+        return v
+
+    @field_validator("value_type", mode="before")
+    @classmethod
+    def _coerce_value_type(cls, v: object) -> object:
+        if v is None:
+            return "text"
+        s = str(v).strip().lower()
+        if s in ("numeric", "number", "float", "integer", "int", "percentage", "currency", "ratio", "count"):
+            return "numeric"
+        if s in ("boolean", "bool", "binary"):
+            return "boolean"
+        if s in ("categorical", "category", "enum", "class"):
+            return "categorical"
+        if s in ("text", "string", "str"):
+            return "text"
+        return v
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, v: object) -> float:
+        if v is None:
+            return 0.85
+        try:
+            val_str = str(v).strip().rstrip("%")
+            val = float(val_str)
+            if val > 1.0 and val <= 100.0:
+                val = val / 100.0
+            return max(0.0, min(1.0, val))
+        except (ValueError, TypeError):
+            return 0.85
+
 
 class FactRelationshipVerdict(BaseModel):
     """Validated shape of pairwise fact comparison verdict returned by reasoner LLM."""
