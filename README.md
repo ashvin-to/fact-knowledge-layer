@@ -33,6 +33,43 @@ A production-grade **Fact Knowledge Layer** that extracts structured atomic fact
 
 ---
 
+## Visual Walkthrough & System Screenshots
+
+### 1. Ingested Documents & Layout Processing Dashboard
+*Central dashboard displaying all processed documents, total fact counts (4,233 facts), page counts, classification status, and real-time processing indicators.*
+
+![Documents Dashboard](docs/screenshots/1.png)
+
+---
+
+### 2. PDF Grounding & Real-Time Evidence Highlighting
+*Interactive document viewer with page-by-page atomic fact breakdown, confidence scores, and dynamic vector quad bounding-box overlays highlighting exact source text on the rendered page.*
+
+![PDF Grounding & Evidence Highlights](docs/screenshots/2.png)
+
+---
+
+### 3. Cross-Document Comparison & Adjudication Matrix
+*Pairwise cross-document semantic comparison showing dual-source quotes, structured difference analysis, temporal/scope reconciliation factors, model attribution, and human-in-the-loop adjudication controls.*
+
+![Cross-Document Comparison](docs/screenshots/3.png)
+
+---
+
+### 4. Multi-Hop Fact Synthesis & Chronological Trajectories ($N \ge 3$ Sources)
+*Autonomous multi-document reasoning tracing metric evolutions and corroboration paths across 3+ independent sources (e.g. Services Sector Growth 7.2% across Economic Survey, RBI Report, and IMF Article IV) with disclosed heuristic fallback handling.*
+
+![Multi-Hop Synthesis](docs/screenshots/4.png)
+
+---
+
+### 5. Interactive D3.js Force-Directed Knowledge Graph
+*Orbital document hulls, entity clusters, and reasoning bridges connecting thousands of grounded facts with real-time semantic relationship filtering.*
+
+![Knowledge Graph](docs/screenshots/5.png)
+
+---
+
 ## Architecture
 
 ```
@@ -110,7 +147,11 @@ The architecture deliberately decouples **atomic fact extraction** from **semant
 
 ## Concrete Case Studies & Examples
 
-The following four case studies are pulled directly from live runs on the real starter dataset PDFs:
+The following case studies are pulled directly from live runs across the real starter datasets (`Economic Survey 2024-25`, `RBI Annual Report 2024-25`, `IMF Article IV Report`, and `Delhivery Filings`):
+
+> [!NOTE]
+> **Dataset Reality & Contradiction Grounding**:
+> Because the starter dataset consists of legally audited corporate balance sheets and official government publications, the underlying ground-truth data does not contain direct factual blunders. The apparent contradiction detected by the automated pipeline in Case 2 was thoroughly investigated under high-DPI visual grounding, revealing how multi-series chart flattening caused a temporal misattribution—showcasing why automated contradiction escalation and **Human-in-the-Loop Adjudication** are essential to the system.
 
 ### 1. Corroborated Fact Across Documents (Stated Differently)
 *When independent documents report identical quantitative metrics under identical scope.*
@@ -138,13 +179,13 @@ The following four case studies are pulled directly from live runs on the real s
 
 ---
 
-### 2. Genuine Contradiction
-*When documents report conflicting values for the exact same metric and time period without reconciling context.*
+### 2. Contradiction Detection & Spatial Disalignment Discovery
+*How the system detects conflicting assertions, triggers second-opinion escalation, and enables human-in-the-loop adjudication.*
 
 - **Fact A** (`01-delhivery-prospectus-2022-excerpt.pdf`, Page 58):
   - **Subject**: `Delhivery Adjusted EBITDA margin` | **Predicate**: `margin_rate`
   - **Value**: `-9.11%` | **Unit**: `%` | **Temporal Scope**: `Fiscal 2021` (FY21)
-  - **Evidence**: *"Our Adjusted EBITDA Margin has improved from (11.35%) in Fiscal 2019 to (9.11%) in Fiscal 2021."*
+  - **Evidence**: *"Our Adjusted EBITDA Margin has improved from (11.35%) in Fiscal 2019 to (9.11%) in Fiscal 2020 and to (6.95%) in Fiscal 2021."*
 - **Fact B** (`02-delhivery-annual-report-fy24-excerpt.pdf`, Page 5):
   - **Subject**: `Delhivery Adjusted EBITDA margin` | **Predicate**: `margin_rate`
   - **Value**: `-6.9%` | **Unit**: `%` | **Temporal Scope**: `FY21` (Fiscal 2021)
@@ -156,7 +197,7 @@ The following four case studies are pulled directly from live runs on the real s
   - `scope = same`: Company full-year adjusted EBITDA margin
   - `unit = same`: `%`
   - `value ≠ same`: **`-9.11%`** vs **`-6.9%`**
-- **Live Output Payload**:
+- **Automated Pipeline Output**:
 ```json
 {
   "relationship_type": "contradict",
@@ -166,6 +207,10 @@ The following four case studies are pulled directly from live runs on the real s
   "explanation": "Both facts report the Adjusted EBITDA margin for Delhivery for the exact same fiscal year (Fiscal 2021 / FY21), but report conflicting values (-9.11% in the 2022 Prospectus vs -6.9% in the FY24 Annual Report). Because both share identical subjects, periods, and percentage units without an explicit restatement note, the system flags this as a direct numerical contradiction."
 }
 ```
+- **Investigation & Human Adjudication Resolution**:
+  - *Automated Flag*: The pipeline classified this pair as `contradict` with `needs_review=1` because raw text extraction from the 5-year bar chart on Page 5 flattened multi-column labels and linked FY20's `(9.11%)` to FY21.
+  - *Visual Grounding*: High-DPI inspection of Page 5 confirmed that FY21 is `-6.9%` (matching the Prospectus figure `-6.95%` when rounded), and `-9.11%` actually belongs to FY20.
+  - *Auditor Action*: An auditor used `/relationships/{id}/adjudicate` to update status to `overruled` and documented the spatial text-flattening artifact in the permanent audit trail.
 
 ---
 
