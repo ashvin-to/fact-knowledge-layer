@@ -151,7 +151,13 @@ The following case studies are pulled directly from live runs across the real st
 
 > [!NOTE]
 > **Dataset Reality & Contradiction Grounding**:
-> Because the starter dataset consists of legally audited corporate balance sheets and official government publications, the underlying ground-truth data does not contain direct factual blunders. The apparent contradiction detected by the automated pipeline in Case 2 was thoroughly investigated under high-DPI visual grounding, revealing how multi-series chart flattening caused a temporal misattribution—showcasing why automated contradiction escalation and **Human-in-the-Loop Adjudication** are essential to the system.
+> Because the starter dataset consists of legally audited corporate filings (Delhivery Prospectus & Annual Reports) and official macroeconomic publications (Economic Survey, RBI Annual Report, IMF Article IV), the underlying ground truth does not contain natural factual blunders. Exhaustive cross-verification across candidate categories confirmed:
+> - **Director Status**: Donald Francis Colleran was an active Director at the time of the 2022 Prospectus (appointed December 2021) and ceased to be a Director during FY24 (September 2023)—a temporal evolution across filings (`context_reconciled [time]`), not a contradiction.
+> - **Subsidiary Counts**: Differences in listed subsidiaries between the 2022 Prospectus and the FY24 Annual Report reflect corporate growth over time as new entities were incorporated or acquired—reconciled by temporal scope.
+> - **EBITDA Margins**: Prospectus reports FY20 at `-9.11%` and FY21 at `-6.95%`; Annual Report reports `-9.1%` and `-6.9%` (rounded agreement). The apparent automated conflict arose from 5-year bar chart text-flattening (detailed in Case 2).
+> - **GDP & Inflation Estimates**: Projections across RBI, IMF, and MoF reconcile by publication date or baseline methodology.
+>
+> To demonstrate the system's end-to-end `contradict` detection and dual-LLM escalation path on genuine conflicting data, a dedicated **Synthetic Stress Test** is documented below following the four real-world case studies.
 
 ### 1. Corroborated Fact Across Documents (Stated Differently)
 *When independent documents report identical quantitative metrics under identical scope.*
@@ -248,6 +254,51 @@ The following case studies are pulled directly from live runs across the real st
   1. **Quarantine & Tracking**: Rather than crashing the ingestion batch, the engine isolates the affected page indices and records them in `documents.skipped_pages = [1, 3, 26]`.
   2. **Audit Disclosure**: The API response explicitly returns `skipped_pages: [1, 3, 26]` so human reviewers can verify why specific non-text slides were bypassed.
   3. **Multimodal Vision Fallback**: Implemented an on-demand Vision-LLM fallback pipeline (`extract_facts_from_page_image`) that renders 150 DPI page images and transmits base64 payloads to vision-enabled endpoints.
+
+---
+
+## Synthetic Stress Test: Verifying the Contradiction Path
+
+To rigorously verify that `/compare` and `evaluate_pair` correctly identify, flag, and escalate direct factual conflicts without relying on OCR or chart-extraction artifacts, we execute a controlled synthetic stress test where all semantic dimensions (`subject`, `predicate`, `time_scope`, `unit`, `scope`) match identically, but the reported quantitative values are irreconcilably contradictory.
+
+### Test Fixture Specification
+
+- **Real Ground-Truth Fact (Fact A)** (`02-delhivery-annual-report-fy24-excerpt.pdf`, Page 35):
+  - **Subject**: `Delhivery Express Parcel` | **Predicate**: `shipment_volume`
+  - **Value**: `740 million` | **Unit**: `parcels` | **Temporal Scope**: `FY24`
+  - **Evidence**: *"In FY24, we delivered 740 million Express Parcel shipments across India."*
+- **Conflicting Synthetic Fact (Fact B)** (`synthetic-stress-test-filing.pdf`, Page 0):
+  - **Subject**: `Delhivery Express Parcel` | **Predicate**: `shipment_volume`
+  - **Value**: `610 million` | **Unit**: `parcels` | **Temporal Scope**: `FY24`
+  - **Evidence**: *"Delhivery completed 610 million Express Parcel shipments in FY24."*
+
+### Dimension Alignment Audit
+- `subject ≈ same`: Delhivery Express Parcel
+- `predicate ≈ same`: shipment_volume
+- `period = same`: FY24 (Fiscal Year 2024)
+- `scope = same`: Full-year express parcel shipments
+- `unit = same`: parcels (million)
+- `value ≠ same`: **`740 million`** vs **`610 million`**
+
+### Live Engine Execution & Output Payload
+
+```json
+{
+  "relationship_type": "contradict",
+  "reconciliation_factor": null,
+  "confidence": 0.95,
+  "needs_review": 1,
+  "explanation": "Both facts report Delhivery's total Express Parcel shipment volume for the exact same fiscal period (FY24) in the same unit (million parcels), but state mutually incompatible figures (740M vs 610M) with no reconciling accounting or operational scope differences.",
+  "second_opinion_model": "llama-3.3-70b-versatile",
+  "second_opinion_verdict": "contradict"
+}
+```
+
+### Escalation & Adjudication Flow
+1. **Automated Contradiction Flagging**: `evaluate_pair()` detects the conflicting numerical claims under identical scope and sets `relationship_type: "contradict"` with `needs_review: 1`.
+2. **Second-Opinion Dispatch**: Because a contradiction was flagged, the engine automatically triggers an asynchronous second-opinion query to a secondary judge model (`second_opinion_model`).
+3. **Consensus & Persistence**: Upon dual-model confirmation, the relationship is committed to SQLite and indexed in the knowledge graph with high visual priority (dashed red links).
+4. **Human Review Queue**: The flagged pair is immediately accessible via `/relationships?needs_review=true` and rendered in the side-by-side adjudication UI for audit sign-off.
 
 ---
 

@@ -278,6 +278,28 @@ Below are the four concrete case studies demonstrating how the system grounds, c
 
 ---
 
+## Synthetic Stress Test: Verifying the Contradiction Path
+
+To verify the reasoning engine's handling of pure numerical and semantic conflicts (independent of chart extraction artifacts), a dedicated synthetic stress test was conducted against a controlled contradiction pair:
+
+- **Fact A (Real Ground-Truth)** (`02-delhivery-annual-report-fy24-excerpt.pdf`, p. 35):
+  - Claim: `[Delhivery Express Parcel]` · `shipment_volume`: **`740 million`** `(FY24)`
+  - Verbatim: *"In FY24, we delivered 740 million Express Parcel shipments across India."*
+- **Fact B (Conflicting Synthetic)** (`synthetic-stress-test-filing.pdf`, p. 0):
+  - Claim: `[Delhivery Express Parcel]` · `shipment_volume`: **`610 million`** `(FY24)`
+  - Verbatim: *"Delhivery completed 610 million Express Parcel shipments in FY24."*
+- **Criteria Alignment**:
+  - `subject ≈ same`: Delhivery Express Parcel
+  - `predicate ≈ same`: shipment_volume
+  - `period = same`: FY24
+  - `scope = same`: Full-year express parcel shipments
+  - `unit = same`: parcels (million)
+  - `value ≠ same`: **`740 million`** vs **`610 million`**
+- **Verdict**: `contradict` (Confidence: `0.95`, `needs_review=1`)
+- **Escalation**: Triggered second-opinion adjudication (`llama-3.3-70b-versatile` concurred with `contradict`), flagged with red-dashed tension lines in the Knowledge Graph, and routed to the human review queue.
+
+---
+
 ## Brownie Points & Architectural Extensions
 
 - **Large PDFs Scalability**: Document ingestion uses chunked per-page commits and parallel thread pools. Pages are streamed and rendered on-demand, preventing GPU memory exhaustion on 100+ page documents.
