@@ -67,11 +67,13 @@ def _process_single_page(
     # Check if page needs vision fallback
     if page.needs_ocr:
         try:
-            doc = fitz.open(path_str)
-            if page_index < len(doc):
-                pix = doc[page_index].get_pixmap(dpi=150)
-                img_bytes = pix.tobytes("png")
-                doc.close()
+            img_bytes: bytes | None = None
+            with fitz.open(path_str) as doc:
+                if page_index < len(doc):
+                    pix = doc[page_index].get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("png")
+
+            if img_bytes:
                 facts = extract_facts_from_page_image(
                     page_image_bytes=img_bytes,
                     page_index=page_index,
