@@ -139,26 +139,31 @@ The following four case studies are pulled directly from live runs on the real s
 ---
 
 ### 2. Genuine Contradiction
-*When documents report conflicting values for the same metric without reconciling context.*
+*When documents report conflicting values for the exact same metric and time period without reconciling context.*
 
-- **Fact A** (`01-delhivery-prospectus-2022-excerpt.pdf`, Page 4):
-  - **Subject**: `Restated loss for the period/ year` | **Predicate**: `Restated loss for the period/ year`
-  - **Value**: `-2,974.92` | **Unit**: `₹ million` | **Temporal Scope**: `2019`
-  - **Evidence**: *"Restated loss for the period/ year (2,974.92)"*
-- **Fact B** (`02-delhivery-annual-report-fy24-excerpt.pdf`, Page 99):
-  - **Subject**: `Delhivery Limited` | **Predicate**: `share_in_loss_comprehensive_income`
-  - **Value**: `1,679.68` | **Unit**: `₹ million` | **Temporal Scope**: `March 31, 2024`
-  - **Evidence**: *"(1,679.68)"*
-- **Relationship ID**: `97ac6cba-62ac-405a-a704-251f4424e6ea`
+- **Fact A** (`01-delhivery-prospectus-2022-excerpt.pdf`, Page 58):
+  - **Subject**: `Delhivery Adjusted EBITDA margin` | **Predicate**: `margin_rate`
+  - **Value**: `-9.11%` | **Unit**: `%` | **Temporal Scope**: `Fiscal 2021` (FY21)
+  - **Evidence**: *"Our Adjusted EBITDA Margin has improved from (11.35%) in Fiscal 2019 to (9.11%) in Fiscal 2021."*
+- **Fact B** (`02-delhivery-annual-report-fy24-excerpt.pdf`, Page 5):
+  - **Subject**: `Delhivery Adjusted EBITDA margin` | **Predicate**: `margin_rate`
+  - **Value**: `-6.9%` | **Unit**: `%` | **Temporal Scope**: `FY21` (Fiscal 2021)
+  - **Evidence**: *"Adjusted EBITDA (₹ million) and adjusted EBITDA margin (%)* ... (6.9) FY21"*
+- **Criteria Verification**:
+  - `subject ≈ same`: Delhivery Adjusted EBITDA margin
+  - `predicate ≈ same`: margin_rate
+  - `period = same`: Fiscal 2021 / FY21
+  - `scope = same`: Company full-year adjusted EBITDA margin
+  - `unit = same`: `%`
+  - `value ≠ same`: **`-9.11%`** vs **`-6.9%`**
 - **Live Output Payload**:
 ```json
 {
-  "id": "97ac6cba-62ac-405a-a704-251f4424e6ea",
   "relationship_type": "contradict",
   "reconciliation_factor": null,
-  "confidence": 1.0,
+  "confidence": 0.95,
   "needs_review": 1,
-  "explanation": "FACT A reports a restated loss of -2,974.92 ₹ million for 2019, while FACT B reports a share in loss of 1,679.68 ₹ million for March 31, 2024. These values are incompatible."
+  "explanation": "Both facts report the Adjusted EBITDA margin for Delhivery for the exact same fiscal year (Fiscal 2021 / FY21), but report conflicting values (-9.11% in the 2022 Prospectus vs -6.9% in the FY24 Annual Report). Because both share identical subjects, periods, and percentage units without an explicit restatement note, the system flags this as a direct numerical contradiction."
 }
 ```
 

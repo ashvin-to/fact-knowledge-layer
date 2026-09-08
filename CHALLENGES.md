@@ -207,15 +207,21 @@ Below are the four concrete case studies demonstrating how the system grounds, c
 ---
 
 ### Case 2: Genuine / Direct Contradiction
-- **Doc A** (`01-delhivery-prospectus-2022-excerpt.pdf`, p. 4):
-  - Claim: `[Restated loss for the period/ year]` · `Restated loss`: **`-2,974.92 ₹ million`** `(2019)`
-  - Verbatim: *"Restated loss for the period/ year (2,974.92)"*
-- **Doc B** (`02-delhivery-annual-report-fy24-excerpt.pdf`, p. 99):
-  - Claim: `[Delhivery Limited]` · `share_in_loss`: **`1,679.68 ₹ million`** `(March 31, 2024)`
-  - Verbatim: *"(1,679.68)"*
-- **Relationship ID**: `97ac6cba-62ac-405a-a704-251f4424e6ea`
-- **Verdict**: `contradict` (Confidence: `1.0`, `needs_review=1`)
-- **System Reasoning**: FACT A reports a restated loss of -2,974.92 ₹ million for 2019, while FACT B reports a share in loss of 1,679.68 ₹ million for March 31, 2024. These values are incompatible.
+- **Doc A** (`01-delhivery-prospectus-2022-excerpt.pdf`, p. 58):
+  - Claim: `[Delhivery Adjusted EBITDA margin]` · `margin_rate`: **`-9.11%`** `(Fiscal 2021)`
+  - Verbatim: *"Our Adjusted EBITDA Margin has improved from (11.35%) in Fiscal 2019 to (9.11%) in Fiscal 2021."*
+- **Doc B** (`02-delhivery-annual-report-fy24-excerpt.pdf`, p. 5):
+  - Claim: `[Delhivery Adjusted EBITDA margin]` · `margin_rate`: **`-6.9%`** `(FY21)`
+  - Verbatim: *"Adjusted EBITDA (₹ million) and adjusted EBITDA margin (%)* ... (6.9) FY21"*
+- **Criteria Verification**:
+  - `subject ≈ same`: Delhivery Adjusted EBITDA margin
+  - `predicate ≈ same`: margin_rate
+  - `period = same`: Fiscal 2021 / FY21
+  - `scope = same`: Company full-year adjusted EBITDA margin
+  - `unit = same`: `%`
+  - `value ≠ same`: **`-9.11%`** vs **`-6.9%`**
+- **Verdict**: `contradict` (Confidence: `0.95`, `needs_review=1`)
+- **System Reasoning**: Both facts report the Adjusted EBITDA margin for Delhivery for the exact same fiscal year (Fiscal 2021 / FY21), but provide conflicting values (-9.11% vs -6.9%). There is no indication of different methodologies or scopes that would reconcile this discrepancy. Flagged for human auditor review.
 
 ---
 
